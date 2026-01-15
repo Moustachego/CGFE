@@ -44,7 +44,7 @@ int main(int argc, char **argv)
     cout << "[SUCCESS] IP table: " << ip_table.size() << " entries, "
          << "Port table: " << port_table.size() << " entries\n\n";
 
-    auto gray_coded_ports = Port_Gray_coding(port_table);       // Gray coding for Port rules, only reads port_table
+    auto gray_coded_ports = SRGE(port_table);       // Gray coding for Port rules, only reads port_table
     cout << "[SUCCESS] Completed Gray coding for Port rules.\n\n";
 
 
