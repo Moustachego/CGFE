@@ -24,28 +24,27 @@ void Port_to_Gray(const vector<PortRule> &port_table, vector<GrayCodedPort> &gra
     for (const auto &pr : port_table) {
         GrayCodedPort gcp;
 
-        // store original port endpoints
-        gcp.src_port_lo = static_cast<uint16_t>(pr.src_port_lo);
-        gcp.src_port_hi = static_cast<uint16_t>(pr.src_port_hi);
-        gcp.dst_port_lo = static_cast<uint16_t>(pr.dst_port_lo);
-        gcp.dst_port_hi = static_cast<uint16_t>(pr.dst_port_hi);
+        // store original port endpoints 
+        gcp.src_port_lo = static_cast<uint16_t>(pr.src_port_lo); 
+        gcp.src_port_hi = static_cast<uint16_t>(pr.src_port_hi); 
+        gcp.dst_port_lo = static_cast<uint16_t>(pr.dst_port_lo); 
+        gcp.dst_port_hi = static_cast<uint16_t>(pr.dst_port_hi); 
 
-        // compute numeric gray values (16-bit)
-        uint16_t s_lo_gray = binary_to_gray(gcp.src_port_lo);
-        uint16_t s_hi_gray = binary_to_gray(gcp.src_port_hi);
-        uint16_t d_lo_gray = binary_to_gray(gcp.dst_port_lo);
-        uint16_t d_hi_gray = binary_to_gray(gcp.dst_port_hi);
+        // compute numeric gray values (16-bit) 
+        uint16_t s_lo_gray = binary_to_gray(gcp.src_port_lo); 
+        uint16_t s_hi_gray = binary_to_gray(gcp.src_port_hi); 
+        uint16_t d_lo_gray = binary_to_gray(gcp.dst_port_lo); 
+        uint16_t d_hi_gray = binary_to_gray(gcp.dst_port_hi); 
 
-        // store binary representations in bitsets
-        gcp.src_port_lo_gray_bs = std::bitset<16>(s_lo_gray);
-        gcp.src_port_hi_gray_bs = std::bitset<16>(s_hi_gray);
-        gcp.dst_port_lo_gray_bs = std::bitset<16>(d_lo_gray);
-        gcp.dst_port_hi_gray_bs = std::bitset<16>(d_hi_gray);
+        // store binary representations in bitsets 
+        gcp.src_port_lo_gray_bs = std::bitset<16>(s_lo_gray); 
+        gcp.src_port_hi_gray_bs = std::bitset<16>(s_hi_gray); 
+        gcp.dst_port_lo_gray_bs = std::bitset<16>(d_lo_gray); 
+        gcp.dst_port_hi_gray_bs = std::bitset<16>(d_hi_gray); 
 
-        // copy metadata
-        gcp.priority = pr.priority;
-        gcp.action = pr.action;
-
+        // copy metadata 
+        gcp.priority = pr.priority; 
+        gcp.action = pr.action; 
         gcp.LCA = {};
 
         gray_coded_ports.push_back(gcp);
