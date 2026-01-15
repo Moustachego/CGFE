@@ -44,8 +44,38 @@ int main(int argc, char **argv)
     cout << "[SUCCESS] IP table: " << ip_table.size() << " entries, "
          << "Port table: " << port_table.size() << " entries\n\n";
 
-    auto gray_coded_ports = SRGE(port_table);       // Gray coding for Port rules, only reads port_table
-    cout << "[SUCCESS] Completed Gray coding for Port rules.\n\n";
+    // Step 3: Apply SRGE to Port rules
+    cout << "[STEP 3] Applying SRGE Gray Code Encoding to Port ranges...\n";
+    auto gray_coded_ports = SRGE(port_table);
+    
+    // Calculate statistics and show details
+    size_t total_src_entries = 0, total_dst_entries = 0;
+    cout << "\n[SRGE Results]:\n";
+    for (size_t i = 0; i < gray_coded_ports.size(); i++) {
+        const auto& gcp = gray_coded_ports[i];
+        total_src_entries += gcp.src_srge.ternary_entries.size();
+        total_dst_entries += gcp.dst_srge.ternary_entries.size();
+        
+        cout << "\nRule #" << (i+1) << ":\n";
+        cout << "  Src port [" << gcp.src_port_lo << ", " << gcp.src_port_hi << "] -> "
+             << gcp.src_srge.ternary_entries.size() << " entries:\n";
+        for (const auto& entry : gcp.src_srge.ternary_entries) {
+            cout << "    " << entry << "\n";
+        }
+        cout << "  Dst port [" << gcp.dst_port_lo << ", " << gcp.dst_port_hi << "] -> "
+             << gcp.dst_srge.ternary_entries.size() << " entries:\n";
+        for (const auto& entry : gcp.dst_srge.ternary_entries) {
+            cout << "    " << entry << "\n";
+        }
+    }
+    
+    cout << "\n[SUCCESS] SRGE encoding complete:\n";
+    cout << "  - Original port rules: " << port_table.size() << "\n";
+    cout << "  - Total source port ternary entries: " << total_src_entries << "\n";
+    cout << "  - Total dest port ternary entries: " << total_dst_entries << "\n";
+    cout << "  - Average expansion factor: " 
+         << fixed << setprecision(2) 
+         << (double)(total_src_entries + total_dst_entries) / (2.0 * port_table.size()) << "x\n\n";
 
 
     cout << "CGFE Main Entry Point" << endl;

@@ -1,6 +1,6 @@
 /** *************************************************************/
-// @Name: Gray_code.cpp (Corrected Implementation)
-// @Function: SRGE - Correct Gray tree-aware range encoding
+// @Name: Gray_code.cpp
+// @Function: SRGE - Symmetric Range Gray Encoding (Paper Implementation)
 // @Author: weijzh (weijzh@pcl.ac.cn)
 // @Created: 2026-01-15
 /************************************************************* */
@@ -9,29 +9,36 @@
 #include <iostream>
 #include <bitset>
 #include <algorithm>
-#include <set>
 #include "Gray_code.hpp"
 #include "Loader.hpp"
 
 using namespace std;
 
 /*
-CORRECTED ALGORITHM (based on user specification):
+================================================================================
+SRGE (Symmetric Range Gray Encoding) - 严格按论文定义实现
 
-For binary range [sb, eb]:
-1. Convert to Gray: sg = G(sb), eg = G(eb)
-2. Find LCA of [sg, eg] and branch bit
-3. Split into left [sg, pl] and right [pr, eg] regions
-4. Choose larger region as "base", smaller as "other"
-5. Split base region into single Gray subtrees
-6. Apply PrefixCover to each subtree
-7. Mirror the prefixes (flip branch bit to *)
-8. Calculate remainder from other region minus base coverage
-9. Recursively process remainder
+总体约束 (铁律):
+- SRGE 的递归单元是 Gray tree 上的"连续子树区间"
+- 输入 [sg, eg] 在 Gray 顺序上连续
+- 所有 split 后的子区间仍然是 Gray 连续区间
+- wildcard 只能表示完整 Gray 子树
+
+递归不变式:
+- srge_recursive(sg, eg) 的输入始终是 Gray 顺序连续区间
+- 每一次 split 都沿 Gray tree 的 LCA 层级
+- wildcard 仅来自完整子树的对称合并
+- 不存在"覆盖但非子树"的 pattern
+
+关键洞察:
+- Gray code 本身不保前缀单调性
+- 但 Gray tree 的结构是由 binary 前缀决定的
+- 所以 LCA 必须在 binary 域计算
+================================================================================
 */
 
 // ============================================================
-// Module 1: Gray Code Conversion
+// Module 1: Gray Code Conversion (基础转换函数)
 // ============================================================
 
 uint16_t binary_to_gray(uint16_t x) {
@@ -46,13 +53,29 @@ uint16_t gray_to_binary(uint16_t g) {
     return b;
 }
 
+// Gray 顺序的前驱 (不是 Gray code 的 -1，而是 binary 值的 -1 对应的 Gray code)
+uint16_t gray_prev(uint16_t g) {
+    uint16_t b = gray_to_binary(g);
+    return binary_to_gray(b - 1);
+}
+
+// Gray 顺序的后继 (不是 Gray code 的 +1，而是 binary 值的 +1 对应的 Gray code)
+uint16_t gray_next(uint16_t g) {
+    uint16_t b = gray_to_binary(g);
+    return binary_to_gray(b + 1);
+}
+
 // ============================================================
-// Utility Functions
+// Module 2: Utility Functions
 // ============================================================
 
 string bitset_to_string(const bitset<16>& bs, int bits) {
     string s = bs.to_string();
     return s.substr(16 - bits);
+}
+
+string gray_to_string(uint16_t g, int bits) {
+    return bitset_to_string(bitset<16>(g), bits);
 }
 
 void print_srge_result(const SRGEResult& result, const string& label) {
@@ -63,391 +86,539 @@ void print_srge_result(const SRGEResult& result, const string& label) {
 }
 
 // ============================================================
-// Gray Tree Structure Functions
+// Module 3: Gray Code LCA Computation (Gray 码公共前缀)
 // ============================================================
 
-// Find LCA: first differing bit position (0 = MSB)
-static int find_lca_position(uint16_t s, uint16_t e, int bits) {
-    if (s == e) return bits;
-    
-    uint16_t diff = s ^ e;
-    for (int i = 0; i < bits; i++) {
-        if (diff & (1 << (bits - 1 - i))) {
-            return i;
+/**
+ * @brief 计算两个 Gray 码的最深公共祖先 (最长公共前缀)
+ * 
+ * 注意：这是 Gray code 的公共前缀，不是 binary 的！
+ * 
+ * @param sg 起始 Gray 码
+ * @param eg 结束 Gray 码  
+ * @param bits 位宽
+ * @return LCA 深度 (公共前缀长度，0 表示第一位就不同)
+ */
+int compute_deepest_gray_lca(uint16_t sg, uint16_t eg, int bits) {
+    // 在 Gray code 表示中，找第一个不同的位
+    for (int i = bits - 1; i >= 0; --i) {
+        if (((sg >> i) & 1) != ((eg >> i) & 1)) {
+            return bits - 1 - i;  // 公共前缀长度
         }
     }
-    return bits;
+    return bits;  // 完全相同
 }
 
-// Get rightmost leaf of left subtree (all lower bits = 1, bit at branch_bit = same as s)
-static uint16_t rightmost_leaf_left(uint16_t s, int bits, int branch_bit) {
-    uint16_t mask = (1u << (bits - 1 - branch_bit)) - 1u;
-    return (s & ~mask) | mask;
+/**
+ * @brief 计算 Gray 码区间的反射伙伴
+ * 
+ * 给定一个 Gray 码，计算它关于某一位的反射
+ * 
+ * @param g Gray 码
+ * @param reflect_bit 反射位 (从高位开始计数)
+ * @param bits 总位宽
+ * @return 反射后的 Gray 码
+ */
+uint16_t gray_reflect(uint16_t g, int reflect_bit, int bits) {
+    // 翻转指定位
+    int bit_pos = bits - 1 - reflect_bit;
+    return g ^ (1u << bit_pos);
 }
 
-// Get leftmost leaf of right subtree (all lower bits = 0, bit at branch_bit = opposite of s)
-static uint16_t leftmost_leaf_right(uint16_t s, int bits, int branch_bit) {
-    uint16_t branch = 1u << (bits - 1 - branch_bit);
-    uint16_t mask = (1u << (bits - 1 - branch_bit)) - 1u;
-    return (s & ~(branch | mask)) | branch;
-}
-
-// Check if [s, e] is a single Gray subtree
-static bool is_single_subtree(uint16_t s, uint16_t e, int bits) {
-    if (s == e) return true;
+/**
+ * @brief 计算以 LCA 为中心的 pivot
+ * 
+ * pivot 是 Gray tree 中 LCA 节点的分界点
+ * 在 Gray 码域中，pivot 是左子树的最后一个值的下一个
+ * 
+ * @param sg 起始 Gray 码
+ * @param eg 结束 Gray 码
+ * @param lca_depth LCA 深度
+ * @param bits 位宽
+ * @return pivot 的 binary 值
+ */
+uint16_t compute_pivot_binary(uint16_t sg, uint16_t eg, int lca_depth, int bits) {
+    (void)eg;
+    // LCA 深度对应的位是第一个不同的位
+    // pivot 是右子树的起点，即 binary 域中的 2^(bits - lca_depth - 1) 的倍数
     
-    int branch_bit = find_lca_position(s, e, bits);
-    if (branch_bit >= bits) return true;
+    uint16_t bs = gray_to_binary(sg);
+    int split_bit = bits - lca_depth - 1;  // 分裂位在 binary 中的位置
     
-    // Check if s and e have same bit at branch_bit
-    bool s_bit = (s >> (bits - 1 - branch_bit)) & 1;
-    bool e_bit = (e >> (bits - 1 - branch_bit)) & 1;
+    // pivot_binary 是大于等于 bs 的、在 split_bit 位为 1 的最小值
+    uint16_t mask = (1u << split_bit);
+    uint16_t pivot = (bs & ~(mask - 1)) | mask;
     
-    return s_bit == e_bit;
-}
-
-// Find minimal ternary patterns covering a Gray range
-vector<string> find_ternary_patterns(uint16_t s, uint16_t e, int bits) {
-    vector<string> patterns;
-    
-    if (s > e) return patterns;
-    
-    if (s == e) {
-        patterns.push_back(bitset_to_string(bitset<16>(s), bits));
-        return patterns;
-    }
-    
-    // Find longest common prefix
-    string s_str = bitset_to_string(bitset<16>(s), bits);
-    string e_str = bitset_to_string(bitset<16>(e), bits);
-    
-    int common_len = 0;
-    while (common_len < bits && s_str[common_len] == e_str[common_len]) {
-        common_len++;
-    }
-    
-    if (common_len == bits) {
-        // All bits match - should not happen if s != e
-        patterns.push_back(s_str);
-        return patterns;
-    }
-    
-    // Check if we can use prefix + wildcards
-    bool can_use_wildcards = true;
-    
-    // For each code in [s, e], check if it matches the pattern with wildcards at remaining positions
-    string tentative_pattern = s_str.substr(0, common_len) + string(bits - common_len, '*');
-    
-    set<uint16_t> covered;
-    for (uint16_t g = s; g <= e; g++) {
-        string g_str = bitset_to_string(bitset<16>(g), bits);
-        
-        // Check if g matches tentative_pattern
-        bool matches = true;
-        for (int i = common_len; i < bits; i++) {
-            // The wildcard part should be flexible - check if code could fall in this pattern's range
-            // Actually, for now just check prefix match
-        }
-        covered.insert(g);
-    }
-    
-    // If all codes in [s, e] fit the pattern, use it
-    if (covered.size() == (size_t)(e - s + 1)) {
-        patterns.push_back(tentative_pattern);
-        return patterns;
-    }
-    
-    // Otherwise, split further
-    uint16_t mid = s + (e - s) / 2;
-    auto left = find_ternary_patterns(s, mid, bits);
-    auto right = find_ternary_patterns(mid + 1, e, bits);
-    patterns.insert(patterns.end(), left.begin(), left.end());
-    patterns.insert(patterns.end(), right.begin(), right.end());
-    
-    return patterns;
+    return pivot;
 }
 
 // ============================================================
-// PrefixCover for single subtree
+// Module 4: Pivot & Interval Split
 // ============================================================
 
-vector<string> prefix_cover_single_subtree(uint16_t s, uint16_t e, int bits) {
-    vector<string> result;
-    
-    if (s == e) {
-        result.push_back(bitset_to_string(bitset<16>(s), bits));
-        return result;
-    }
-    
-    string s_str = bitset_to_string(bitset<16>(s), bits);
-    string e_str = bitset_to_string(bitset<16>(e), bits);
-    
-    // Find common prefix length
-    int common_len = 0;
-    while (common_len < bits && s_str[common_len] == e_str[common_len]) {
-        common_len++;
-    }
-    
-    // Build ternary: common prefix + wildcards
-    string ternary = s_str.substr(0, common_len);
-    for (int i = common_len; i < bits; i++) {
-        ternary += '*';
-    }
-    
-    result.push_back(ternary);
-    return result;
-}
-
-// ============================================================
-// Mirror prefix at bit position
-// ============================================================
-
-static string mirror_prefix(const string& ternary, int branch_bit) {
-    string result = ternary;
-    if (branch_bit < (int)result.length()) {
-        result[branch_bit] = '*';
-    }
-    return result;
-}
-
-// ============================================================
-// Main SRGE Recursive Algorithm
-// ============================================================
-
-void srge_gray_recursive(
-    uint16_t s,
-    uint16_t e,
-    int bits,
-    vector<string>& results
+/**
+ * @brief 根据 binary pivot 将 Gray 区间分裂为左右子区间
+ * 
+ * @param sg 起始 Gray 码
+ * @param eg 结束 Gray 码
+ * @param pivot_binary 分裂点 (binary 值)
+ * @param left_start, left_end 左子区间 (输出，binary 值)
+ * @param right_start, right_end 右子区间 (输出，binary 值)
+ */
+void split_by_pivot(
+    uint16_t sg, uint16_t eg, uint16_t pivot_binary,
+    uint16_t& left_bs, uint16_t& left_be,
+    uint16_t& right_bs, uint16_t& right_be
 ) {
-    // Base case: single value
-    if (s == e) {
-        results.push_back(bitset_to_string(bitset<16>(s), bits));
+    uint16_t bs = gray_to_binary(sg);
+    uint16_t be = gray_to_binary(eg);
+    
+    // Left = [bs, pivot - 1]
+    left_bs = bs;
+    left_be = pivot_binary - 1;
+    
+    // Right = [pivot, be]
+    right_bs = pivot_binary;
+    right_be = be;
+}
+
+// ============================================================
+// Module 5: Reflection Merge (论文核心)
+// ============================================================
+
+/**
+ * @brief 计算 Gray 区间的大小 (binary 域)
+ */
+uint32_t binary_range_size(uint16_t bs, uint16_t be) {
+    if (bs > be) return 0;
+    return (uint32_t)(be - bs + 1);
+}
+
+/**
+ * @brief 构建覆盖区间的 ternary pattern (Gray code 形式)
+ */
+string build_pattern_for_range(uint16_t bs, uint16_t be, int bits) {
+    if (bs > be) return "";
+    
+    // 计算区间内所有 Gray code 的共同特征
+    uint16_t all_ones = 0xFFFF;
+    uint16_t all_zeros = 0x0000;
+    
+    for (uint16_t b = bs; b <= be; ++b) {
+        uint16_t g = binary_to_gray(b);
+        all_ones &= g;
+        all_zeros |= g;
+    }
+    
+    string pattern;
+    for (int i = bits - 1; i >= 0; --i) {
+        bool is_one = (all_ones >> i) & 1;
+        bool is_zero = !((all_zeros >> i) & 1);
+        
+        if (is_one) pattern += '1';
+        else if (is_zero) pattern += '0';
+        else pattern += '*';
+    }
+    
+    return pattern;
+}
+
+/**
+ * @brief 检查一个 binary 区间是否形成有效的 Gray hypercube
+ * 
+ * 有效的 hypercube 意味着区间内所有 Gray codes 只在固定的几位上变化
+ * 
+ * @return true 如果是有效的 hypercube
+ */
+bool is_valid_gray_hypercube(uint16_t bs, uint16_t be, int bits) {
+    if (bs > be) return false;
+    uint32_t size = be - bs + 1;
+    
+    // 计算区间内 Gray codes 的变化位
+    uint16_t all_ones = 0xFFFF;
+    uint16_t all_zeros = 0x0000;
+    
+    for (uint16_t b = bs; b <= be; ++b) {
+        uint16_t g = binary_to_gray(b);
+        all_ones &= g;
+        all_zeros |= g;
+    }
+    
+    // wildcard 位 = all_zeros 中为 1 且 all_ones 中为 0 的位
+    uint16_t wildcard_bits = all_zeros & ~all_ones;
+    int num_wildcards = __builtin_popcount(wildcard_bits);
+    
+    // 有效的 hypercube: size == 2^num_wildcards
+    return size == (1u << num_wildcards);
+}
+
+/**
+ * @brief 在给定区间中找到从起点开始的最大有效 Gray hypercube
+ * 
+ * @param bs 起始 binary 值
+ * @param be 结束 binary 值 (上界)
+ * @param bits 位宽
+ * @return 最大有效 hypercube 的结束位置
+ */
+uint16_t find_max_hypercube_from_start(uint16_t bs, uint16_t be, int bits) {
+    // 从最大可能的 2 的幂次开始尝试
+    uint32_t max_size = be - bs + 1;
+    
+    // 找到不超过 max_size 的最大 2 的幂次
+    uint32_t try_size = 1;
+    while (try_size * 2 <= max_size) {
+        try_size *= 2;
+    }
+    
+    // 从大到小尝试找有效的 hypercube
+    while (try_size >= 1) {
+        uint16_t try_end = bs + try_size - 1;
+        if (try_end <= be && is_valid_gray_hypercube(bs, try_end, bits)) {
+            return try_end;
+        }
+        try_size /= 2;
+    }
+    
+    return bs;  // 至少返回单点
+}
+
+// ============================================================
+// Module 6: SRGE 主递归函数 (Top-down 贪心 + 反射消耗)
+// ============================================================
+
+/**
+ * @brief 在 binary 区间内从起点贪心找最大 Gray hypercube
+ * 
+ * @param bs 起始 binary 值
+ * @param be 结束 binary 值
+ * @param bits 位宽
+ * @return 最大 hypercube 的结束位置
+ */
+uint16_t greedy_max_hypercube(uint16_t bs, uint16_t be, int bits) {
+    if (bs > be) return bs;
+    
+    // 从最大可能的 2 的幂次开始尝试
+    uint32_t max_size = be - bs + 1;
+    uint32_t try_size = 1;
+    while (try_size * 2 <= max_size) {
+        try_size *= 2;
+    }
+    
+    // 从大到小尝试
+    while (try_size >= 1) {
+        uint16_t try_end = bs + try_size - 1;
+        if (try_end <= be && is_valid_gray_hypercube(bs, try_end, bits)) {
+            return try_end;
+        }
+        try_size /= 2;
+    }
+    
+    return bs;  // 至少单点
+}
+
+/**
+ * @brief SRGE 递归实现 - Top-down 贪心 + 反射消耗
+ * 
+ * 算法流程：
+ * 1. 计算 Gray LCA，分裂成左右区间
+ * 2. 选择较短的一边进行内部贪心合并
+ * 3. 将合并结果关于 LCA 反射 → 输出 pattern，同时消耗另一侧对称区间
+ * 4. 递归处理两侧剩余区间
+ * 
+ * @param bs 起始 binary 值
+ * @param be 结束 binary 值
+ * @param bits 位宽
+ * @param results 输出 pattern 集合
+ */
+void srge_recursive_impl(uint16_t bs, uint16_t be, int bits, vector<string>& results) {
+    if (bs > be) return;
+    
+    // Base case: 单点
+    if (bs == be) {
+        results.push_back(gray_to_string(binary_to_gray(bs), bits));
         return;
     }
     
-    cout << "\nSRGE: [" << bitset_to_string(bitset<16>(s), bits)
-         << ", " << bitset_to_string(bitset<16>(e), bits) << "]" << endl;
-    
-    // Case 1: Single subtree
-    if (is_single_subtree(s, e, bits)) {
-        cout << "  Single subtree → PrefixCover" << endl;
-        vector<string> prefixes = prefix_cover_single_subtree(s, e, bits);
-        for (const auto& p : prefixes) {
-            cout << "    " << p << endl;
-            results.push_back(p);
-        }
+    // Base case: 整个区间是 hypercube
+    if (is_valid_gray_hypercube(bs, be, bits)) {
+        results.push_back(build_pattern_for_range(bs, be, bits));
         return;
     }
     
-    // Case 2: Multi-subtree
-    cout << "  Multi-subtree → Split and Mirror" << endl;
+    // 计算 LCA 和分裂点
+    uint16_t sg = binary_to_gray(bs);
+    uint16_t eg = binary_to_gray(be);
+    int lca_depth = compute_deepest_gray_lca(sg, eg, bits);
+    int flip_bit_pos = bits - 1 - lca_depth;
     
-    int branch_bit = find_lca_position(s, e, bits);
-    
-    // Boundaries
-    uint16_t pl = rightmost_leaf_left(s, bits, branch_bit);
-    uint16_t pr = leftmost_leaf_right(s, bits, branch_bit);
-    
-    Range left_region = {s, min(e, pl)};
-    Range right_region = {max(s, pr), e};
-    
-    // Count sizes: count distinct binary values covered by each Gray range
-    int left_size = 0, right_size = 0;
-    if (left_region.start <= left_region.end) {
-        // Count binary values that map to Gray codes in [left_start, left_end]
-        set<uint16_t> left_bins;
-        for (uint16_t g = left_region.start; g <= left_region.end; g++) {
-            left_bins.insert(gray_to_binary(g));
+    // 找 pivot: Gray 序列中第一个在 lca_depth 位与 sg 不同的值
+    int sg_bit = (sg >> flip_bit_pos) & 1;
+    uint16_t pivot = 0xFFFF;
+    for (uint16_t b = bs; b <= be; b++) {
+        uint16_t g = binary_to_gray(b);
+        if (((g >> flip_bit_pos) & 1) != sg_bit) {
+            pivot = b;
+            break;
         }
-        left_size = left_bins.size();
     }
-    if (right_region.start <= right_region.end) {
-        // Count binary values that map to Gray codes in [right_start, right_end]
-        set<uint16_t> right_bins;
-        for (uint16_t g = right_region.start; g <= right_region.end; g++) {
-            right_bins.insert(gray_to_binary(g));
+    
+    if (pivot == 0xFFFF) {
+        // 无法分裂，作为 hypercube 输出
+        results.push_back(build_pattern_for_range(bs, be, bits));
+        return;
+    }
+    
+    // 分裂成左右区间
+    uint16_t left_bs = bs, left_be = pivot - 1;
+    uint16_t right_bs = pivot, right_be = be;
+    
+    uint32_t left_size = left_be - left_bs + 1;
+    uint32_t right_size = right_be - right_bs + 1;
+    
+    // 选择短的一边进行贪心合并
+    bool process_right_first = (right_size <= left_size);
+    
+    if (process_right_first) {
+        // 在右侧贪心合并
+        uint16_t merge_end = greedy_max_hypercube(right_bs, right_be, bits);
+        uint32_t merge_size = merge_end - right_bs + 1;
+        
+        // 生成 pattern 并反射
+        string pattern = build_pattern_for_range(right_bs, merge_end, bits);
+        pattern[lca_depth] = '*';  // 反射：将 LCA 位变为 wildcard
+        results.push_back(pattern);
+        
+        // 左侧消耗对称部分：从右往左数 merge_size 个
+        // 左侧剩余 [left_bs, left_be - merge_size]
+        uint16_t left_remain_be = left_be - merge_size;
+        
+        // 右侧剩余 [merge_end + 1, right_be]
+        uint16_t right_remain_bs = merge_end + 1;
+        
+        bool has_left = (left_remain_be >= left_bs);
+        bool has_right = (right_remain_bs <= right_be);
+        
+        // 关键：如果两侧都有剩余，尝试继续反射合并
+        if (has_left && has_right) {
+            // 对右侧剩余进行贪心，看能否和左侧部分反射合并
+            uint16_t r_merge_end = greedy_max_hypercube(right_remain_bs, right_be, bits);
+            uint32_t r_merge_size = r_merge_end - right_remain_bs + 1;
+            
+            // 检查左侧是否有足够的对称部分
+            if (r_merge_size <= (left_remain_be - left_bs + 1)) {
+                // 左侧对称部分：[left_remain_be - r_merge_size + 1, left_remain_be]
+                uint16_t l_sym_bs = left_remain_be - r_merge_size + 1;
+                
+                // 检查是否能反射合并
+                string r_pat = build_pattern_for_range(right_remain_bs, r_merge_end, bits);
+                string l_pat = build_pattern_for_range(l_sym_bs, left_remain_be, bits);
+                
+                // 计算两个区间的 LCA
+                uint16_t r_g = binary_to_gray(right_remain_bs);
+                uint16_t l_g = binary_to_gray(l_sym_bs);
+                int sub_lca = compute_deepest_gray_lca(l_g, r_g, bits);
+                
+                // 检查除 sub_lca 位外其他位是否相同
+                bool can_merge = true;
+                for (int i = 0; i < bits; i++) {
+                    if (i == sub_lca) continue;
+                    if (l_pat[i] != r_pat[i]) {
+                        can_merge = false;
+                        break;
+                    }
+                }
+                
+                if (can_merge) {
+                    // 合并并反射
+                    l_pat[sub_lca] = '*';
+                    results.push_back(l_pat);
+                    
+                    // 处理左侧剩余的剩余
+                    if (l_sym_bs > left_bs) {
+                        srge_recursive_impl(left_bs, l_sym_bs - 1, bits, results);
+                    }
+                    
+                    // 处理右侧剩余的剩余
+                    if (r_merge_end < right_be) {
+                        srge_recursive_impl(r_merge_end + 1, right_be, bits, results);
+                    }
+                    return;
+                }
+            }
+            
+            // 无法反射合并，分别递归
+            srge_recursive_impl(left_bs, left_remain_be, bits, results);
+            srge_recursive_impl(right_remain_bs, right_be, bits, results);
+        } else if (has_left) {
+            srge_recursive_impl(left_bs, left_remain_be, bits, results);
+        } else if (has_right) {
+            srge_recursive_impl(right_remain_bs, right_be, bits, results);
         }
-        right_size = right_bins.size();
-    }
-    
-    cout << "  Left size: " << left_size << ", Right size: " << right_size << endl;
-    cout << "  Left: [" << bitset_to_string(bitset<16>(left_region.start), bits)
-         << ", " << bitset_to_string(bitset<16>(left_region.end), bits) << "]" << endl;
-    cout << "  Right: [" << bitset_to_string(bitset<16>(right_region.start), bits)
-         << ", " << bitset_to_string(bitset<16>(right_region.end), bits) << "]" << endl;
-    
-    // Choose larger as base
-    Range base_region = (right_size >= left_size) ? right_region : left_region;
-    Range other_region = (right_size >= left_size) ? left_region : right_region;
-    int base_size = max(left_size, right_size);
-    
-    cout << "  Base region: [" << bitset_to_string(bitset<16>(base_region.start), bits)
-         << ", " << bitset_to_string(bitset<16>(base_region.end), bits) << "]" << endl;
-    
-    // Step 1: Split base into ternary patterns
-    vector<string> base_prefixes = find_ternary_patterns(base_region.start, base_region.end, bits);
-    
-    cout << "  Base patterns (" << base_prefixes.size() << "):" << endl;
-    for (const auto& p : base_prefixes) {
-        cout << "    " << p << endl;
-    }
-    
-    // Step 3: Mirror
-    vector<string> mirrored;
-    for (const auto& p : base_prefixes) {
-        mirrored.push_back(mirror_prefix(p, branch_bit));
-    }
-    
-    cout << "  Mirrored (bit " << branch_bit << " → *):" << endl;
-    for (const auto& m : mirrored) {
-        cout << "    " << m << endl;
-        results.push_back(m);
-    }
-    
-    // Step 3: Calculate remainder
-    if (other_region.start <= other_region.end) {
-        uint16_t remainder_start = other_region.start;
-        uint16_t remainder_end = other_region.end;
+    } else {
+        // 在左侧贪心合并
+        uint16_t merge_end = greedy_max_hypercube(left_bs, left_be, bits);
+        uint32_t merge_size = merge_end - left_bs + 1;
         
-        int other_total = remainder_end - remainder_start + 1;
-        int base_total = base_region.end - base_region.start + 1;
+        // 生成 pattern 并反射
+        string pattern = build_pattern_for_range(left_bs, merge_end, bits);
+        pattern[lca_depth] = '*';  // 反射
+        results.push_back(pattern);
         
-        // If other has more codes, calculate remainder
-        if (other_total > base_total) {
-            uint16_t new_end = remainder_start + (other_total - base_total - 1);
-            
-            cout << "  Remainder: [" << bitset_to_string(bitset<16>(remainder_start), bits)
-                 << ", " << bitset_to_string(bitset<16>(new_end), bits) << "]" << endl;
-            
-            // Step 4: Recurse
-            srge_gray_recursive(remainder_start, new_end, bits, results);
+        // 右侧消耗对称部分：从左往右数 merge_size 个
+        // 左侧剩余 [merge_end + 1, left_be]
+        uint16_t left_remain_bs = merge_end + 1;
+        
+        // 右侧剩余 [right_bs + merge_size, right_be]
+        uint16_t right_remain_bs = right_bs + merge_size;
+        
+        // 递归处理剩余
+        if (left_remain_bs <= left_be) {
+            if (right_remain_bs <= right_be) {
+                srge_recursive_impl(left_remain_bs, left_be, bits, results);
+                srge_recursive_impl(right_remain_bs, right_be, bits, results);
+            } else {
+                srge_recursive_impl(left_remain_bs, left_be, bits, results);
+            }
         } else {
-            cout << "  No remainder" << endl;
+            if (right_remain_bs <= right_be) {
+                srge_recursive_impl(right_remain_bs, right_be, bits, results);
+            }
         }
     }
 }
 
+// 旧接口的包装
+void srge_recursive(uint16_t sg, uint16_t eg, int bits, vector<string>& results) {
+    uint16_t bs = gray_to_binary(sg);
+    uint16_t be = gray_to_binary(eg);
+    srge_recursive_impl(bs, be, bits, results);
+}
+
 // ============================================================
-// Main SRGE Interface
+// Module 7: SRGE 主入口
 // ============================================================
 
+/**
+ * @brief SRGE 编码主入口 - 将二进制范围编码为 ternary pattern 集合
+ * 
+ * @param sb 二进制起始值
+ * @param eb 二进制结束值
+ * @param bits 位宽 (默认 16)
+ * @return SRGEResult 包含 ternary pattern 集合
+ */
 SRGEResult srge_encode(uint16_t sb, uint16_t eb, int bits) {
     SRGEResult result;
     
     if (sb > eb) {
-        swap(sb, eb);
+        return result;  // 空范围
     }
     
-    // Single value
-    if (sb == eb) {
-        uint16_t g = binary_to_gray(sb);
-        result.ternary_entries.push_back(bitset_to_string(bitset<16>(g), bits));
-        return result;
-    }
-    
-    // Full domain
-    uint16_t max_val = (1u << bits) - 1;
-    if (sb == 0 && eb == max_val) {
-        result.ternary_entries.push_back(string(bits, '*'));
-        return result;
-    }
-    
-    // Convert to Gray
+    // 转换为 Gray 码区间
     uint16_t sg = binary_to_gray(sb);
     uint16_t eg = binary_to_gray(eb);
     
-    cout << "\n=== SRGE Encoding ===" << endl;
-    cout << "Binary range: [" << sb << ", " << eb << "]" << endl;
-    cout << "Gray range: [" << bitset_to_string(bitset<16>(sg), bits)
-         << ", " << bitset_to_string(bitset<16>(eg), bits) << "]" << endl;
+    // 注意: binary_to_gray 保持单调性，所以 [sb, eb] 对应连续 Gray 码区间
+    // 但 Gray 码的 "连续" 定义需要论文明确
     
-    srge_gray_recursive(sg, eg, bits, result.ternary_entries);
-    
-    // Deduplicate
-    sort(result.ternary_entries.begin(), result.ternary_entries.end());
-    result.ternary_entries.erase(
-        unique(result.ternary_entries.begin(), result.ternary_entries.end()),
-        result.ternary_entries.end()
-    );
+    // 调用递归分解
+    srge_recursive(sg, eg, bits, result.ternary_entries);
     
     return result;
 }
 
 // ============================================================
-// Port Processing
+// Module 8: Port Table SRGE Processing
 // ============================================================
 
-void Port_to_Gray(const vector<PortRule> &port_table, vector<GrayCodedPort> &gray_coded_ports) {
-    for (const auto &pr : port_table) {
-        GrayCodedPort gcp;
-
-        gcp.src_port_lo = static_cast<uint16_t>(pr.src_port_lo);
-        gcp.src_port_hi = static_cast<uint16_t>(pr.src_port_hi);
-        gcp.dst_port_lo = static_cast<uint16_t>(pr.dst_port_lo);
-        gcp.dst_port_hi = static_cast<uint16_t>(pr.dst_port_hi);
-
-        uint16_t s_lo_gray = binary_to_gray(gcp.src_port_lo);
-        uint16_t s_hi_gray = binary_to_gray(gcp.src_port_hi);
-        uint16_t d_lo_gray = binary_to_gray(gcp.dst_port_lo);
-        uint16_t d_hi_gray = binary_to_gray(gcp.dst_port_hi);
-
-        gcp.src_port_lo_gray_bs = std::bitset<16>(s_lo_gray);
-        gcp.src_port_hi_gray_bs = std::bitset<16>(s_hi_gray);
-        gcp.dst_port_lo_gray_bs = std::bitset<16>(d_lo_gray);
-        gcp.dst_port_hi_gray_bs = std::bitset<16>(d_hi_gray);
-
-        gcp.priority = pr.priority;
-        gcp.action = pr.action;
-
-        gray_coded_ports.push_back(gcp);
-    }
-}
-
-void Apply_SRGE_to_Ports(vector<GrayCodedPort> &gray_coded_ports) {
-    cout << "\n========== Applying SRGE to Port Ranges ==========\n" << endl;
+vector<GrayCodedPort> SRGE(const vector<PortRule> &port_table) {
+    vector<GrayCodedPort> results;
     
-    for (auto &gcp : gray_coded_ports) {
-        cout << "Rule priority " << gcp.priority << ":" << endl;
+    for (const auto &rule : port_table) {
+        GrayCodedPort gcp;
         
-        cout << "  Source ports [" << gcp.src_port_lo << ", " << gcp.src_port_hi << "]:" << endl;
-        gcp.src_srge = srge_encode(gcp.src_port_lo, gcp.src_port_hi);
-        for (const auto& entry : gcp.src_srge.ternary_entries) {
-            cout << "    " << entry << endl;
-        }
+        // 保存原始端口范围
+        gcp.src_port_lo = rule.src_port_lo;
+        gcp.src_port_hi = rule.src_port_hi;
+        gcp.dst_port_lo = rule.dst_port_lo;
+        gcp.dst_port_hi = rule.dst_port_hi;
         
-        cout << "  Dest ports [" << gcp.dst_port_lo << ", " << gcp.dst_port_hi << "]:" << endl;
-        gcp.dst_srge = srge_encode(gcp.dst_port_lo, gcp.dst_port_hi);
-        for (const auto& entry : gcp.dst_srge.ternary_entries) {
-            cout << "    " << entry << endl;
-        }
+        // 计算 Gray 码
+        gcp.src_port_lo_gray_bs = bitset<16>(binary_to_gray(rule.src_port_lo));
+        gcp.src_port_hi_gray_bs = bitset<16>(binary_to_gray(rule.src_port_hi));
+        gcp.dst_port_lo_gray_bs = bitset<16>(binary_to_gray(rule.dst_port_lo));
+        gcp.dst_port_hi_gray_bs = bitset<16>(binary_to_gray(rule.dst_port_hi));
         
-        cout << endl;
+        // 应用 SRGE 编码
+        gcp.src_srge = srge_encode(rule.src_port_lo, rule.src_port_hi, GRAY_BITS);
+        gcp.dst_srge = srge_encode(rule.dst_port_lo, rule.dst_port_hi, GRAY_BITS);
+        
+        // 复制其他字段
+        gcp.priority = rule.priority;
+        gcp.action = rule.action;
+        
+        results.push_back(gcp);
     }
+    
+    return results;
 }
 
-auto Port_Gray_coding(const vector<PortRule> &port_table) -> vector<GrayCodedPort> {
-    vector<GrayCodedPort> gray_coded_ports;
-
-    Port_to_Gray(port_table, gray_coded_ports);
-    Apply_SRGE_to_Ports(gray_coded_ports);
-
-    return gray_coded_ports;
-}
+// ============================================================
+// Test Main (条件编译)
+// ============================================================
 
 #ifdef DEMO_LOADER_MAIN
-int main(int argc, char **argv) {
-    cout << "===== SRGE Test Cases =====" << endl;
+int main() {
+    cout << "===== SRGE 论文算法实现测试 =====\n\n";
     
-    cout << "\n--- Test 1: [6, 14] ---" << endl;
-    SRGEResult result1 = srge_encode(6, 14, 4);
-    print_srge_result(result1, "[6,14]");
-    cout << "Expected: *10*, 1*1*, 1*01" << endl;
+    // 测试 Gray 码转换
+    cout << "Gray 码转换测试 (4-bit):\n";
+    cout << "Binary -> Gray -> Binary\n";
+    for (int i = 0; i <= 15; i++) {
+        uint16_t g = binary_to_gray(i);
+        cout << "  " << i << " -> " << bitset<4>(g) << " -> " << gray_to_binary(g) << endl;
+    }
+    cout << endl;
     
-    cout << "\n--- Test 2: [1, 13] ---" << endl;
-    SRGEResult result2 = srge_encode(1, 13, 4);
-    print_srge_result(result2, "[1,13]");
-    cout << "Expected: *1**, *01*, *001*" << endl;
+    // 测试 LCA 计算
+    cout << "LCA 计算测试 (Gray code 公共前缀深度):\n";
+    auto test_lca = [](int b1, int b2, int bits) {
+        uint16_t g1 = binary_to_gray(b1);
+        uint16_t g2 = binary_to_gray(b2);
+        int lca = compute_deepest_gray_lca(g1, g2, bits);
+        cout << "  binary [" << b1 << ", " << b2 << "]"
+             << " gray [" << bitset<4>(g1) << ", " << bitset<4>(g2) << "]"
+             << " -> LCA depth = " << lca << endl;
+    };
+    test_lca(6, 14, 4);   // 0101, 1001 -> 第一位不同，depth=0
+    test_lca(1, 13, 4);   // 0001, 1011 -> 第一位不同，depth=0
+    test_lca(0, 7, 4);    // 0000, 0100 -> 第一位相同，depth>=1
+    test_lca(8, 15, 4);   // 1100, 1000 -> 第一位相同，depth>=1
+    test_lca(0, 15, 4);   // 0000, 1000 -> 第一位不同，depth=0
+    cout << endl;
+    
+    // 测试 SRGE 编码
+    cout << "SRGE 编码测试:\n";
+    
+    auto test_srge = [](int sb, int eb, int bits) {
+        cout << "\n--- Binary range [" << sb << ", " << eb << "] ---\n";
+        SRGEResult result = srge_encode(sb, eb, bits);
+        cout << "Result (" << result.ternary_entries.size() << " entries):\n";
+        for (const auto& e : result.ternary_entries) {
+            cout << "  " << e << endl;
+        }
+    };
+    
+    test_srge(6, 14, 4);
+    cout << "Expected: *10*, 1*1*, 1*01 (3 entries)\n";
+    
+    test_srge(1, 13, 4);
+    cout << "Expected: *1**, *01*, 0001 (3 entries)\n";
+    
+    test_srge(0, 7, 4);
+    cout << "Expected: 0*** (1 entry - complete left subtree)\n";
+    
+    test_srge(0, 15, 4);
+    cout << "Expected: **** (1 entry - complete tree)\n";
     
     return 0;
 }
