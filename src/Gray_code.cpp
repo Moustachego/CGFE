@@ -7,6 +7,8 @@
 
 #include <vector>
 #include <iostream>
+#include <fstream>
+#include <iomanip>
 #include <bitset>
 #include <algorithm>
 #include "Gray_code.hpp"
@@ -512,6 +514,13 @@ SRGEResult srge_encode(uint16_t sb, uint16_t eb, int bits) {
     if (sb > eb) {
         return result;  // 空范围
     }
+
+    // ✅ 特殊值：整个域，直接 wildcard
+    uint32_t max_val = (1u << bits) - 1;
+    if (sb == 0 && eb == max_val) {
+        result.ternary_entries.push_back(string(bits, '*'));
+        return result;
+    }    
     
     // 转换为 Gray 码区间
     uint16_t sg = binary_to_gray(sb);
@@ -563,7 +572,7 @@ vector<GrayCodedPort> SRGE(const vector<PortRule> &port_table) {
 }
 
 // ============================================================
-// Test Main (条件编译)
+// Test Main 
 // ============================================================
 
 #ifdef DEMO_LOADER_MAIN
@@ -619,7 +628,126 @@ int main() {
     
     test_srge(0, 15, 4);
     cout << "Expected: **** (1 entry - complete tree)\n";
+
+    test_srge(1, 6, 4);
+    cout << "Expected: 0*1*, 0*01 (2 entry - complete left subtree)\n";
     
     return 0;
 }
 #endif
+
+// ===============================================================================
+// Module 6: TCAM Entry Generation
+// ===============================================================================
+
+std::vector<GrayTCAM_Entry> generate_tcam_entries(const std::vector<GrayCodedPort>& gray_ports) {
+    std::vector<GrayTCAM_Entry> tcam_entries;
+    
+    for (const auto& gp : gray_ports) {
+        // Cartesian product: each src_pattern × each dst_pattern
+        for (const auto& src_pat : gp.src_srge.ternary_entries) {
+            for (const auto& dst_pat : gp.dst_srge.ternary_entries) {
+                GrayTCAM_Entry entry;
+                entry.src_pattern = src_pat;
+                entry.dst_pattern = dst_pat;
+                entry.priority = gp.priority;
+                entry.action = gp.action;
+                tcam_entries.push_back(entry);
+            }
+        }
+    }
+    
+    return tcam_entries;
+}
+
+// ===============================================================================
+// Module 7: Output Functions
+// ===============================================================================
+
+void print_tcam_rules(const std::vector<GrayTCAM_Entry>& tcam_entries, 
+                      const std::vector<IPRule>& ip_table,
+                      const std::string& output_file) {
+    // Determine output stream
+    std::ostream* out_stream = &std::cout;
+    std::ofstream file_stream;
+    
+    if (!output_file.empty()) {
+        // Create output directory if needed
+        size_t last_slash = output_file.find_last_of("/");
+        if (last_slash != std::string::npos) {
+            std::string dir = output_file.substr(0, last_slash);
+            system(("mkdir -p " + dir).c_str());
+        }
+        
+        file_stream.open(output_file);
+        if (!file_stream.is_open()) {
+            std::cerr << "[ERROR] Cannot open output file: " << output_file << "\n";
+            return;
+        }
+        out_stream = &file_stream;
+    }
+    
+    *out_stream << "=== TCAM Rules (Gray Code Ternary Format) ===\n\n";
+    
+    for (size_t i = 0; i < tcam_entries.size(); i++) {
+        const auto& entry = tcam_entries[i];
+        
+        // Find corresponding IP rule by priority
+        const IPRule* ip_rule = nullptr;
+        for (const auto& ipr : ip_table) {
+            if (ipr.priority == entry.priority) {
+                ip_rule = &ipr;
+                break;
+            }
+        }
+        
+        if (!ip_rule) {
+            std::cerr << "[WARN] No IP rule found for priority " << entry.priority << "\n";
+            continue;
+        }
+        
+        // Format: @SRC_IP/MASK  DST_IP/MASK  SPORT_PATTERN  DPORT_PATTERN  PROTO/MASK  ACTION
+        *out_stream << "@";
+        
+        // Source IP
+        uint32_t sip = ip_rule->src_ip_lo;
+        *out_stream << ((sip >> 24) & 0xFF) << "." 
+                    << ((sip >> 16) & 0xFF) << "." 
+                    << ((sip >> 8) & 0xFF) << "." 
+                    << (sip & 0xFF) << "/" << ip_rule->src_prefix_len;
+        
+        *out_stream << "     ";
+        
+        // Destination IP
+        uint32_t dip = ip_rule->dst_ip_lo;
+        *out_stream << ((dip >> 24) & 0xFF) << "." 
+                    << ((dip >> 16) & 0xFF) << "." 
+                    << ((dip >> 8) & 0xFF) << "." 
+                    << (dip & 0xFF) << "/" << ip_rule->dst_prefix_len;
+        
+        *out_stream << "         ";
+        
+        // Source port pattern (only last 4 bits for readability if 16-bit)
+        std::string src_short = entry.src_pattern.substr(entry.src_pattern.length() - 4);
+        *out_stream << src_short << "  ";
+        
+        // Destination port pattern
+        std::string dst_short = entry.dst_pattern.substr(entry.dst_pattern.length() - 4);
+        *out_stream << dst_short << "   ";
+        
+        // Protocol
+        *out_stream << "0x" << std::hex << std::setw(2) << std::setfill('0') 
+                    << (int)ip_rule->proto << "/0xFF   ";
+        
+        // Action
+        *out_stream << std::dec << entry.action;
+        
+        *out_stream << "\n";
+    }
+    
+    *out_stream << "\n=== Total TCAM Entries: " << tcam_entries.size() << " ===\n";
+    
+    if (file_stream.is_open()) {
+        file_stream.close();
+    }
+}

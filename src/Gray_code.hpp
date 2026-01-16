@@ -78,3 +78,15 @@ SRGEResult srge_encode(uint16_t sb, uint16_t eb, int bits = GRAY_BITS);
 // Convert port rules to Gray-coded entries and apply SRGE
 auto SRGE(const std::vector<PortRule> &port_table) -> std::vector<GrayCodedPort>;
 
+// Module 6: TCAM Entry Generation
+// Generate expanded TCAM entries from Gray-coded ports
+// Each original rule expands to (src_patterns.size() × dst_patterns.size()) TCAM entries
+std::vector<GrayTCAM_Entry> generate_tcam_entries(const std::vector<GrayCodedPort>& gray_ports);
+
+// Module 7: Output Functions
+// Print TCAM entries in ternary rule format
+// If output_file is provided, writes to file; otherwise prints to stdout
+void print_tcam_rules(const std::vector<GrayTCAM_Entry>& tcam_entries, 
+                      const std::vector<IPRule>& ip_table,
+                      const std::string& output_file = "");
+

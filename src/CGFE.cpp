@@ -20,10 +20,6 @@ int main(int argc, char **argv)
         rules_path = string(argv[1]);
     }
 
-    cout << "===============================================================================\n";
-    cout << "---------------------------------- CGFE ----------------------------------\n";
-    cout << "===============================================================================\n\n";
-
     // Step 1: Load rules from file
     cout << "[STEP 1] Loading rules from: " << rules_path << endl;
     vector<Rule5D> rules;
@@ -43,41 +39,46 @@ int main(int argc, char **argv)
     split_rules(rules, ip_table, port_table);
     cout << "[SUCCESS] IP table: " << ip_table.size() << " entries, "
          << "Port table: " << port_table.size() << " entries\n\n";
-
-    // Step 3: Apply SRGE to Port rules
-    cout << "[STEP 3] Applying SRGE Gray Code Encoding to Port ranges...\n";
-    auto gray_coded_ports = SRGE(port_table);
-    
-    // Calculate statistics and show details
-    size_t total_src_entries = 0, total_dst_entries = 0;
-    cout << "\n[SRGE Results]:\n";
-    for (size_t i = 0; i < gray_coded_ports.size(); i++) {
-        const auto& gcp = gray_coded_ports[i];
-        total_src_entries += gcp.src_srge.ternary_entries.size();
-        total_dst_entries += gcp.dst_srge.ternary_entries.size();
         
-        cout << "\nRule #" << (i+1) << ":\n";
-        cout << "  Src port [" << gcp.src_port_lo << ", " << gcp.src_port_hi << "] -> "
-             << gcp.src_srge.ternary_entries.size() << " entries:\n";
-        for (const auto& entry : gcp.src_srge.ternary_entries) {
-            cout << "    " << entry << "\n";
-        }
-        cout << "  Dst port [" << gcp.dst_port_lo << ", " << gcp.dst_port_hi << "] -> "
-             << gcp.dst_srge.ternary_entries.size() << " entries:\n";
-        for (const auto& entry : gcp.dst_srge.ternary_entries) {
-            cout << "    " << entry << "\n";
-        }
-    }
+    // ===============================================================================
+    // SRGE Algorithm
+    // ===============================================================================
+    cout << "\n===============================================================================\n";
+    cout << "----------------------------------- SRGE --------------------------------------\n";
+    cout << "===============================================================================\n\n";
+    cout << "[STEP 3] Applying SRGE Gray Code Encoding to Port ranges...\n\n";
     
-    cout << "\n[SUCCESS] SRGE encoding complete:\n";
+    auto gray_coded_ports = SRGE(port_table);
+    auto tcam_entries = generate_tcam_entries(gray_coded_ports);
+    
+    cout << "[SRGE Results]:\n\n";
+    cout << "[SUCCESS] SRGE encoding complete:\n";
     cout << "  - Original port rules: " << port_table.size() << "\n";
-    cout << "  - Total source port ternary entries: " << total_src_entries << "\n";
-    cout << "  - Total dest port ternary entries: " << total_dst_entries << "\n";
+    cout << "  - Generated TCAM entries: " << tcam_entries.size() << "\n";
     cout << "  - Average expansion factor: " 
-         << fixed << setprecision(2) 
-         << (double)(total_src_entries + total_dst_entries) / (2.0 * port_table.size()) << "x\n\n";
-
-
-    cout << "CGFE Main Entry Point" << endl;
+         << fixed << setprecision(0) 
+         << (double)tcam_entries.size() / port_table.size() << "x\n\n";
+    
+    // Extract base filename for output
+    string base_name = rules_path.substr(rules_path.find_last_of("/") + 1);
+    base_name = base_name.substr(0, base_name.find_last_of("."));
+    string output_file = "src/output/" + base_name + "_SRGE.txt";
+    
+    // Save TCAM rules to file
+    print_tcam_rules(tcam_entries, ip_table, output_file);
+    cout << "[OUTPUT] TCAM rules saved to: " << output_file << "\n";
+    
+    cout << "\nend\n";
+    
+    // ===============================================================================
+    // DIP Algorithm (Placeholder)
+    // ===============================================================================
+    cout << "\n===============================================================================\n";
+    cout << "----------------------------------- DIP ---------------------------------------\n";
+    cout << "===============================================================================\n\n";
+    
+    // TODO: Implement DIP algorithm
+    
+    cout << "\n\nCGFE Main Entry Point" << endl;
     return 0;
 }
