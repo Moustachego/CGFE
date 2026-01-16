@@ -13,8 +13,10 @@
 #include <cassert>
 #include <algorithm>
 #include <iomanip>
+#include <fstream>
 
 #include "Chunk_code.hpp"
+#include "Loader.hpp"
 
 using namespace std;
 
@@ -305,6 +307,156 @@ void print_dirpe_result(const DIRPEResult& result, const std::string& label) {
         std::cout << "    [" << result.subranges[i].first << ", " 
                   << result.subranges[i].second << "] -> " 
                   << result.encodings[i] << std::endl;
+    }
+}
+
+// ===============================================================================
+// Module 5: Port Processing
+// ===============================================================================
+
+/**
+ * Encode port table using DIRPE (similar to SRGE)
+ */
+std::vector<DIRPEPort> DIRPE(const std::vector<PortRule>& port_table, 
+                              int chunk_width) {
+    std::vector<DIRPEPort> dirpe_ports;
+    
+    DIRPEConfig config;
+    config.W = chunk_width;
+    config.total_bits = 16;  // Standard port range is 16-bit
+    
+    for (const auto& pr : port_table) {
+        DIRPEPort dp;
+        dp.src_port_lo = pr.src_port_lo;
+        dp.src_port_hi = pr.src_port_hi;
+        dp.dst_port_lo = pr.dst_port_lo;
+        dp.dst_port_hi = pr.dst_port_hi;
+        dp.priority = pr.priority;
+        dp.action = pr.action;
+        
+        // Encode source and destination port ranges
+        dp.src_dirpe = dirpe_encode_range(pr.src_port_lo, pr.src_port_hi, config);
+        dp.dst_dirpe = dirpe_encode_range(pr.dst_port_lo, pr.dst_port_hi, config);
+        
+        dirpe_ports.push_back(dp);
+    }
+    
+    return dirpe_ports;
+}
+
+/**
+ * Generate TCAM entries from DIRPE-encoded ports
+ */
+std::vector<DIRPETCAM_Entry> generate_dirpe_tcam_entries(const std::vector<DIRPEPort>& dirpe_ports) {
+    std::vector<DIRPETCAM_Entry> tcam_entries;
+    
+    for (const auto& dp : dirpe_ports) {
+        // Cartesian product: each src_pattern × each dst_pattern
+        for (const auto& src_pat : dp.src_dirpe.encodings) {
+            for (const auto& dst_pat : dp.dst_dirpe.encodings) {
+                DIRPETCAM_Entry entry;
+                entry.src_pattern = src_pat;
+                entry.dst_pattern = dst_pat;
+                entry.priority = dp.priority;
+                entry.action = dp.action;
+                tcam_entries.push_back(entry);
+            }
+        }
+    }
+    
+    return tcam_entries;
+}
+
+/**
+ * Print DIRPE TCAM rules to file or stdout
+ */
+void print_dirpe_tcam_rules(const std::vector<DIRPETCAM_Entry>& tcam_entries,
+                            const std::vector<IPRule>& ip_table,
+                            const std::string& output_file) {
+    // Determine output stream
+    std::ostream* out_stream = &std::cout;
+    std::ofstream file_stream;
+    
+    if (!output_file.empty()) {
+        // Create output directory if needed
+        size_t last_slash = output_file.find_last_of("/");
+        if (last_slash != std::string::npos) {
+            std::string dir = output_file.substr(0, last_slash);
+            system(("mkdir -p " + dir).c_str());
+        }
+        
+        file_stream.open(output_file);
+        if (!file_stream.is_open()) {
+            std::cerr << "[ERROR] Cannot open output file: " << output_file << "\n";
+            return;
+        }
+        out_stream = &file_stream;
+    }
+    
+    *out_stream << "=== DIRPE TCAM Rules (Chunk-based Ternary Format) ===\n\n";
+    
+    for (size_t i = 0; i < tcam_entries.size(); i++) {
+        const auto& entry = tcam_entries[i];
+        
+        // Find corresponding IP rule by priority
+        const IPRule* ip_rule = nullptr;
+        for (const auto& ipr : ip_table) {
+            if (ipr.priority == entry.priority) {
+                ip_rule = &ipr;
+                break;
+            }
+        }
+        
+        if (!ip_rule) {
+            std::cerr << "[WARN] No IP rule found for priority " << entry.priority << "\n";
+            continue;
+        }
+        
+        // Format: @SRC_IP/MASK  DST_IP/MASK  SPORT_PATTERN  DPORT_PATTERN  PROTO/MASK  ACTION
+        *out_stream << "@";
+        
+        // Source IP
+        uint32_t sip = ip_rule->src_ip_lo;
+        *out_stream << ((sip >> 24) & 0xFF) << "." 
+                    << ((sip >> 16) & 0xFF) << "." 
+                    << ((sip >> 8) & 0xFF) << "." 
+                    << (sip & 0xFF) << "/" << ip_rule->src_prefix_len;
+        
+        *out_stream << "     ";
+        
+        // Destination IP
+        uint32_t dip = ip_rule->dst_ip_lo;
+        *out_stream << ((dip >> 24) & 0xFF) << "." 
+                    << ((dip >> 16) & 0xFF) << "." 
+                    << ((dip >> 8) & 0xFF) << "." 
+                    << (dip & 0xFF) << "/" << ip_rule->dst_prefix_len;
+        
+        *out_stream << "         ";
+        
+        // Source port pattern (show last 8 bits for readability)
+        std::string src_short = entry.src_pattern.length() >= 8 ? 
+            entry.src_pattern.substr(entry.src_pattern.length() - 8) : entry.src_pattern;
+        *out_stream << src_short << "  ";
+        
+        // Destination port pattern (show last 8 bits for readability)
+        std::string dst_short = entry.dst_pattern.length() >= 8 ? 
+            entry.dst_pattern.substr(entry.dst_pattern.length() - 8) : entry.dst_pattern;
+        *out_stream << dst_short << "   ";
+        
+        // Protocol
+        *out_stream << "0x" << std::hex << std::setw(2) << std::setfill('0') 
+                    << (int)ip_rule->proto << "/0xFF   ";
+        
+        // Action
+        *out_stream << std::dec << entry.action;
+        
+        *out_stream << "\n";
+    }
+    
+    *out_stream << "\n=== Total DIRPE TCAM Entries: " << tcam_entries.size() << " ===\n";
+    
+    if (file_stream.is_open()) {
+        file_stream.close();
     }
 }
 

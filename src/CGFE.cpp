@@ -9,6 +9,7 @@
 #include <iostream>
 #include "Loader.hpp"
 #include "Gray_code.hpp"
+#include "Chunk_code.hpp"
 
 using namespace std;
 
@@ -71,13 +72,33 @@ int main(int argc, char **argv)
     cout << "\nend\n";
     
     // ===============================================================================
-    // DIP Algorithm (Placeholder)
+    // DIRPE algorithm
     // ===============================================================================
     cout << "\n===============================================================================\n";
-    cout << "----------------------------------- DIP ---------------------------------------\n";
+    cout << "----------------------------------- DIRPE ---------------------------------------\n";
     cout << "===============================================================================\n\n";
+    cout << "[STEP 4] Applying DIRPE Chunk-based Encoding to Port ranges...\n\n";
     
-    // TODO: Implement DIP algorithm
+    // Encode ports using DIRPE with W=2 (chunk width = 2 bits)
+    int chunk_width = 2;
+    auto dirpe_ports = DIRPE(port_table, chunk_width);
+    auto dirpe_tcam = generate_dirpe_tcam_entries(dirpe_ports);
+    
+    cout << "[DIRPE Results]:\n\n";
+    cout << "[SUCCESS] DIRPE encoding complete:\n";
+    cout << "  - Original port rules: " << port_table.size() << "\n";
+    cout << "  - Generated TCAM entries: " << dirpe_tcam.size() << "\n";
+    cout << "  - Chunk width (W): " << chunk_width << " bits\n";
+    cout << "  - Average expansion factor: " 
+         << fixed << setprecision(0) 
+         << (double)dirpe_tcam.size() / port_table.size() << "x\n\n";
+    
+    // Save DIRPE TCAM rules to file
+    string dirpe_output_file = "src/output/" + base_name + "_DIRPE.txt";
+    print_dirpe_tcam_rules(dirpe_tcam, ip_table, dirpe_output_file);
+    cout << "[OUTPUT] DIRPE TCAM rules saved to: " << dirpe_output_file << "\n";
+    
+    cout << "\nend\n";
     
     cout << "\n\nCGFE Main Entry Point" << endl;
     return 0;

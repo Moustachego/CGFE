@@ -11,6 +11,7 @@
 #include <vector>
 #include <string>
 #include <cstdint>
+#include "Loader.hpp"
 
 // ===============================================================================
 // DIRPE Configuration
@@ -82,4 +83,42 @@ void print_dirpe_result(const DIRPEResult& result, const std::string& label = ""
 
 // Format encoding with chunk separators for readability
 std::string format_with_separators(const std::string& encoding, int W);
+
+// ===============================================================================
+// Module 5: Port Processing (similar to SRGE interface)
+// ===============================================================================
+
+// Structure for DIRPE-encoded port (similar to GrayCodedPort)
+struct DIRPEPort {
+    uint16_t src_port_lo;
+    uint16_t src_port_hi;
+    uint16_t dst_port_lo;
+    uint16_t dst_port_hi;
+    uint32_t priority;
+    std::string action;
+    
+    // DIRPE results for source and destination port ranges
+    DIRPEResult src_dirpe;
+    DIRPEResult dst_dirpe;
+};
+
+// Structure for DIRPE TCAM entry (port dimension only)
+struct DIRPETCAM_Entry {
+    std::string src_pattern;
+    std::string dst_pattern;
+    uint32_t priority;
+    std::string action;
+};
+
+// Encode port table using DIRPE
+std::vector<DIRPEPort> DIRPE(const std::vector<PortRule>& port_table, 
+                              int chunk_width = 2);
+
+// Generate TCAM entries from DIRPE-encoded ports
+std::vector<DIRPETCAM_Entry> generate_dirpe_tcam_entries(const std::vector<DIRPEPort>& dirpe_ports);
+
+// Print DIRPE TCAM rules to file or stdout
+void print_dirpe_tcam_rules(const std::vector<DIRPETCAM_Entry>& tcam_entries,
+                            const std::vector<IPRule>& ip_table,
+                            const std::string& output_file = "");
 
