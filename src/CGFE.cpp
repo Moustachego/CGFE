@@ -20,10 +20,6 @@ int main(int argc, char **argv)
         rules_path = string(argv[1]);
     }
 
-    cout << "===============================================================================\n";
-    cout << "---------------------------------- CGFE ----------------------------------\n";
-    cout << "===============================================================================\n\n";
-
     // Step 1: Load rules from file
     cout << "[STEP 1] Loading rules from: " << rules_path << endl;
     vector<Rule5D> rules;
@@ -43,11 +39,46 @@ int main(int argc, char **argv)
     split_rules(rules, ip_table, port_table);
     cout << "[SUCCESS] IP table: " << ip_table.size() << " entries, "
          << "Port table: " << port_table.size() << " entries\n\n";
-
-    auto gray_coded_ports = Port_Gray_coding(port_table);       // Gray coding for Port rules, only reads port_table
-    cout << "[SUCCESS] Completed Gray coding for Port rules.\n\n";
-
-
-    cout << "CGFE Main Entry Point" << endl;
+        
+    // ===============================================================================
+    // SRGE Algorithm
+    // ===============================================================================
+    cout << "\n===============================================================================\n";
+    cout << "----------------------------------- SRGE --------------------------------------\n";
+    cout << "===============================================================================\n\n";
+    cout << "[STEP 3] Applying SRGE Gray Code Encoding to Port ranges...\n\n";
+    
+    auto gray_coded_ports = SRGE(port_table);
+    auto tcam_entries = generate_tcam_entries(gray_coded_ports);
+    
+    cout << "[SRGE Results]:\n\n";
+    cout << "[SUCCESS] SRGE encoding complete:\n";
+    cout << "  - Original port rules: " << port_table.size() << "\n";
+    cout << "  - Generated TCAM entries: " << tcam_entries.size() << "\n";
+    cout << "  - Average expansion factor: " 
+         << fixed << setprecision(0) 
+         << (double)tcam_entries.size() / port_table.size() << "x\n\n";
+    
+    // Extract base filename for output
+    string base_name = rules_path.substr(rules_path.find_last_of("/") + 1);
+    base_name = base_name.substr(0, base_name.find_last_of("."));
+    string output_file = "src/output/" + base_name + "_SRGE.txt";
+    
+    // Save TCAM rules to file
+    print_tcam_rules(tcam_entries, ip_table, output_file);
+    cout << "[OUTPUT] TCAM rules saved to: " << output_file << "\n";
+    
+    cout << "\nend\n";
+    
+    // ===============================================================================
+    // DIP Algorithm (Placeholder)
+    // ===============================================================================
+    cout << "\n===============================================================================\n";
+    cout << "----------------------------------- DIP ---------------------------------------\n";
+    cout << "===============================================================================\n\n";
+    
+    // TODO: Implement DIP algorithm
+    
+    cout << "\n\nCGFE Main Entry Point" << endl;
     return 0;
 }
