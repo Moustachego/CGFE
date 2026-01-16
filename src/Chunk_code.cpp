@@ -93,7 +93,7 @@ std::string dirpe_range_chunk(int s, int e, int W) {
 }
 
 // ===============================================================================
-// Module 2: Chunk-aligned Range Decomposition
+// Module 2: Chunk-aligned Range Decomposition (HIGH-bit First Strategy)
 // ===============================================================================
 
 /**
@@ -111,47 +111,156 @@ int get_chunk(uint16_t value, int chunk_idx, const DIRPEConfig& config) {
 }
 
 /**
- * Check if a range needs decomposition.
- * 
- * A range needs decomposition if any chunk has s_chunk > e_chunk.
- * This means the range "wraps around" within that chunk dimension.
+ * Find the FIRST (highest) chunk where s_chunk != e_chunk
+ * Returns -1 if all chunks are equal (single value)
  */
-bool needs_decomposition(uint16_t s, uint16_t e, const DIRPEConfig& config) {
-    if (s > e) return true;  // Invalid range
+int find_split_chunk_high(uint16_t s, uint16_t e, const DIRPEConfig& config) {
+    for (int i = 0; i < config.num_chunks(); i++) {
+        int s_chunk = get_chunk(s, i, config);
+        int e_chunk = get_chunk(e, i, config);
+        if (s_chunk != e_chunk) {
+            return i;
+        }
+    }
+    return -1;  // All chunks equal (s == e)
+}
+
+/**
+ * Check if a range can be directly encoded without decomposition.
+ * 
+ * A range [s, e] can be directly encoded if:
+ *   1. All chunks satisfy s_chunk <= e_chunk
+ *   2. Once a chunk has s_chunk < e_chunk, ALL subsequent (lower) chunks must 
+ *      have s_chunk = 0 and e_chunk = 2^W - 1 (full range)
+ * 
+ * This is because DIRPE encoding uses Cartesian product of chunk ranges.
+ * If chunk i has s_chunk[i] < e_chunk[i], the encoded pattern will match
+ * ALL combinations of lower chunk values, not just the range [s, e].
+ * 
+ * Example: [1, 6] with W=2, 6 bits (3 chunks)
+ *   s=1 = 00|00|01, e=6 = 00|01|10
+ *   Chunk 0: 00 = 00 (equal, OK)
+ *   Chunk 1: 00 < 01 (different!) 
+ *   Chunk 2: 01, 10 - but this must be [0, 3] for direct encoding!
+ *   Since chunk 2 is [1, 2] not [0, 3], cannot directly encode -> need decomposition
+ */
+bool can_directly_encode(uint16_t s, uint16_t e, const DIRPEConfig& config) {
+    bool found_diff = false;  // Have we seen a chunk where s != e?
+    int max_chunk_val = (1 << config.W) - 1;  // 2^W - 1
     
     for (int i = 0; i < config.num_chunks(); i++) {
         int s_chunk = get_chunk(s, i, config);
         int e_chunk = get_chunk(e, i, config);
+        
         if (s_chunk > e_chunk) {
-            return true;
+            // Invalid: s_chunk > e_chunk never allows direct encoding
+            return false;
         }
+        
+        if (found_diff) {
+            // After we've seen a differing chunk, ALL subsequent chunks
+            // must be full range [0, max] for Cartesian product to work
+            if (s_chunk != 0 || e_chunk != max_chunk_val) {
+                return false;
+            }
+        } else if (s_chunk < e_chunk) {
+            // First differing chunk found
+            found_diff = true;
+        }
+        // If s_chunk == e_chunk, continue checking
     }
-    return false;
+    
+    return true;
 }
 
 /**
- * Chunk-aligned Range Decomposition
+ * Split a range [s, e] at chunk k into subranges.
  * 
- * Decomposes [s, e] into subranges where each subrange satisfies:
- *   for all chunks i: s_chunk[i] <= e_chunk[i]
+ * Given that chunk k is the first (highest) chunk where s_chunk[k] != e_chunk[k]:
  * 
- * Strategy (recursive):
- *   1. Find the lowest (rightmost) chunk where s_chunk > e_chunk
- *   2. Split at that chunk's boundary:
- *      - Left part: [s, s with lower bits all 1s] 
- *      - Right part: [e with lower bits all 0s, e]
- *      - Middle part: everything in between (if exists)
- *   3. Recursively decompose each part
+ * 1. Left subrange:  [s, s_prefix | remaining_bits_all_1s]
+ *    - Covers from s to the end of s's "block" at chunk k
  * 
- * Example: [2, 9] with W=2, total_bits=4
- *   2 = 00|10, 9 = 10|01
- *   Chunk 0: 00 < 10 (OK)
- *   Chunk 1: 10 > 01 (FAIL) -> Split here
+ * 2. Middle subranges: For each c in (s_chunk[k]+1) .. (e_chunk[k]-1)
+ *    - Full chunks: [c << remaining_bits, (c << remaining_bits) | remaining_bits_all_1s]
+ * 
+ * 3. Right subrange: [(e_prefix), e]
+ *    - Covers from the start of e's "block" to e
+ * 
+ * Example: [1, 6] with W=2, total_bits=6 (3 chunks)
+ *   s=1 = 00|00|01, e=6 = 00|01|10
+ *   First diff chunk: k=1 (s_chunk[1]=00, e_chunk[1]=01)
+ *   remaining_bits = 2 (chunk 2 only)
  *   
- *   Decompose at chunk 1 boundary:
- *   - [2, 3]: s=00|10, end at 00|11 (fill lower chunk to max)
- *   - [4, 7]: 01|00 to 01|11 (middle complete chunk)
- *   - [8, 9]: start at 10|00 to e=10|01
+ *   s_prefix (bits at and above k) = 00|00|xx -> keep 00|00 = 0
+ *   e_prefix (bits at and above k) = 00|01|xx -> keep 00|01 = 4
+ *   
+ *   Left:  [1, 0|remaining_mask] = [1, 3]
+ *   Middle: none (s_chunk[1]+1=1, e_chunk[1]-1=0, no values)
+ *   Right: [4, 6]
+ */
+std::vector<std::pair<uint16_t, uint16_t>> split_range_by_chunk(
+    uint16_t s, uint16_t e, int k, const DIRPEConfig& config) {
+    
+    std::vector<std::pair<uint16_t, uint16_t>> result;
+    
+    // remaining_bits: bits BELOW chunk k (not including chunk k itself)
+    int remaining_bits = (config.num_chunks() - k - 1) * config.W;
+    
+    if (remaining_bits < 0) remaining_bits = 0;
+    
+    uint16_t remaining_mask = (remaining_bits > 0) ? ((1 << remaining_bits) - 1) : 0;
+    
+    // Bits AT AND ABOVE chunk k (including chunk k)
+    int upper_bits = (k + 1) * config.W;
+    uint16_t upper_shift = config.total_bits - upper_bits;
+    
+    // Get s and e's chunk values at position k
+    int s_chunk_k = get_chunk(s, k, config);
+    int e_chunk_k = get_chunk(e, k, config);
+    
+    // Extract the prefix part (bits above chunk k, not including k)
+    int prefix_bits = k * config.W;  // bits strictly above chunk k
+    uint16_t prefix_shift = config.total_bits - prefix_bits;
+    uint16_t prefix_from_s = (prefix_bits > 0) ? (s >> prefix_shift) : 0;
+    
+    // 1. Left subrange: [s, left_end]
+    // left_end = same prefix as s + s_chunk_k at position k + all 1s below
+    uint16_t left_prefix = (prefix_from_s << prefix_shift) | (s_chunk_k << remaining_bits);
+    uint16_t left_end = left_prefix | remaining_mask;
+    if (s <= left_end && left_end <= e) {
+        result.push_back({s, left_end});
+    }
+    
+    // 2. Middle subranges: for each full chunk value c in (s_chunk_k+1)..(e_chunk_k-1)
+    for (int c = s_chunk_k + 1; c <= e_chunk_k - 1; c++) {
+        uint16_t mid_base = (prefix_from_s << prefix_shift) | (c << remaining_bits);
+        uint16_t mid_end = mid_base | remaining_mask;
+        result.push_back({mid_base, mid_end});
+    }
+    
+    // 3. Right subrange: [right_start, e]
+    // right_start = same prefix as s (which equals prefix of e) + e_chunk_k at position k + all 0s below
+    uint16_t right_base = (prefix_from_s << prefix_shift) | (e_chunk_k << remaining_bits);
+    uint16_t right_start = right_base;  // Lower bits are 0
+    if (right_start <= e && right_start > left_end) {
+        result.push_back({right_start, e});
+    }
+    
+    return result;
+}
+
+/**
+ * DIRPE Decomposition (Correct High-bit First Algorithm)
+ * 
+ * Recursively decomposes [s, e] into subranges where each subrange can be
+ * directly encoded as a Cartesian product of chunk ranges.
+ * 
+ * Algorithm:
+ *   1. Check if [s,e] can be directly encoded
+ *   2. If yes, return [{s, e}]
+ *   3. If no, find first (highest) chunk k where s_chunk != e_chunk
+ *   4. Split at chunk k and recursively process each subrange
  */
 std::vector<std::pair<uint16_t, uint16_t>> chunk_aligned_decomposition(
     uint16_t s, uint16_t e, const DIRPEConfig& config) {
@@ -162,60 +271,28 @@ std::vector<std::pair<uint16_t, uint16_t>> chunk_aligned_decomposition(
         return result;  // Empty range
     }
     
-    // Check if decomposition is needed
-    if (!needs_decomposition(s, e, config)) {
-        // No decomposition needed - range is already chunk-aligned
+    // Step 1: Check if directly encodable
+    if (can_directly_encode(s, e, config)) {
         result.push_back({s, e});
         return result;
     }
     
-    // Find the LOWEST (rightmost) chunk where s_chunk > e_chunk
-    // This is the chunk that causes the "wrap-around"
-    int split_chunk = -1;
-    for (int i = config.num_chunks() - 1; i >= 0; i--) {
-        int s_chunk = get_chunk(s, i, config);
-        int e_chunk = get_chunk(e, i, config);
-        if (s_chunk > e_chunk) {
-            split_chunk = i;
-            break;
-        }
-    }
+    // Step 2: Find first (highest) chunk where s_chunk != e_chunk
+    int split_chunk = find_split_chunk_high(s, e, config);
     
     if (split_chunk == -1) {
-        // Should not happen if needs_decomposition returned true
+        // All chunks equal means s == e, which is directly encodable
         result.push_back({s, e});
         return result;
     }
     
-    // Calculate chunk boundary for splitting
-    // chunk_bits: number of bits below (and including) the split chunk
-    int chunk_bits = (config.num_chunks() - split_chunk) * config.W;
-    uint16_t lower_mask = (1 << chunk_bits) - 1;  // Mask for lower bits including split chunk
+    // Step 3: Split at this chunk
+    auto subranges = split_range_by_chunk(s, e, split_chunk, config);
     
-    // Get the upper part of s and e (bits above the split chunk)
-    uint16_t s_upper = s & ~lower_mask;
-    uint16_t e_upper = e & ~lower_mask;
-    
-    // Subrange 1: [s, s_upper | lower_mask] - left boundary (fill lower bits with 1s)
-    uint16_t left_end = s_upper | lower_mask;
-    if (s <= left_end) {
-        auto sub1 = chunk_aligned_decomposition(s, left_end, config);
-        result.insert(result.end(), sub1.begin(), sub1.end());
-    }
-    
-    // Subrange 2: [s_upper + (1 << chunk_bits), e_upper - 1] - middle chunks
-    // This is the range between the left boundary end and right boundary start
-    uint16_t middle_start = s_upper + (1 << chunk_bits);
-    uint16_t middle_end = e_upper - 1;
-    if (middle_start <= middle_end && middle_end < 0xFFFF) {
-        auto sub2 = chunk_aligned_decomposition(middle_start, middle_end, config);
-        result.insert(result.end(), sub2.begin(), sub2.end());
-    }
-    
-    // Subrange 3: [e_upper, e] - right boundary (clear lower bits to 0)
-    if (e_upper <= e && e_upper > left_end) {
-        auto sub3 = chunk_aligned_decomposition(e_upper, e, config);
-        result.insert(result.end(), sub3.begin(), sub3.end());
+    // Step 4: Recursively decompose each subrange
+    for (const auto& sub : subranges) {
+        auto decomposed = chunk_aligned_decomposition(sub.first, sub.second, config);
+        result.insert(result.end(), decomposed.begin(), decomposed.end());
     }
     
     return result;
@@ -555,10 +632,134 @@ int main() {
     cout << endl;
     
     // =========================================================================
-    // Test 4: Additional test cases
+    // Test 4: THREE CRITICAL TEST CASES (User反例验证)
     // =========================================================================
-    cout << "--- Test 4: Additional Test Cases ---\n\n";
+    cout << "--- Test 4: THREE CRITICAL TEST CASES ---\n\n";
     
+    // All tests use W=2, total_bits=4 (2 chunks)
+    // This is the standard 4-bit configuration
+    
+    // =========================================================================
+    // CRITICAL TEST 1: [1, 6]
+    // =========================================================================
+    cout << "*** CRITICAL TEST 1: [1, 6] ***\n";
+    cout << "1 = 00|01, 6 = 01|10 (W=2, 4-bit)\n";
+    cout << "Chunk0: 00 vs 01 → 分裂点!\n";
+    cout << "Expected: [1,3], [4,6]\n";
+    cout << "Expected encodings: 000**1, 0010**\n\n";
+    
+    DIRPEResult r_1_6 = dirpe_encode_range(1, 6, config);
+    
+    cout << "Actual:\n";
+    for (size_t i = 0; i < r_1_6.encodings.size(); i++) {
+        cout << "  [" << r_1_6.subranges[i].first << ", " 
+             << r_1_6.subranges[i].second << "] -> " 
+             << r_1_6.encodings[i] << endl;
+    }
+    
+    bool test1_pass = (r_1_6.subranges.size() == 2 &&
+                       r_1_6.subranges[0] == make_pair<uint16_t,uint16_t>(1, 3) &&
+                       r_1_6.subranges[1] == make_pair<uint16_t,uint16_t>(4, 6) &&
+                       r_1_6.encodings[0] == "000**1" &&
+                       r_1_6.encodings[1] == "0010**");
+    cout << (test1_pass ? "[PASS]" : "[FAIL]") << " Test 1: [1,6]\n\n";
+    
+    // =========================================================================
+    // CRITICAL TEST 2: [6, 14]
+    // =========================================================================
+    cout << "*** CRITICAL TEST 2: [6, 14] ***\n";
+    cout << "6 = 01|10, 14 = 11|10 (W=2, 4-bit)\n";
+    cout << "Chunk0: 01 vs 11 → 分裂点!\n";
+    cout << "Expected: [6,7], [8,11], [12,14]\n";
+    cout << "Expected encodings: 001*11, 011***, *110**\n\n";
+    
+    DIRPEResult r_6_14 = dirpe_encode_range(6, 14, config);
+    
+    cout << "Actual:\n";
+    for (size_t i = 0; i < r_6_14.encodings.size(); i++) {
+        cout << "  [" << r_6_14.subranges[i].first << ", " 
+             << r_6_14.subranges[i].second << "] -> " 
+             << r_6_14.encodings[i] << endl;
+    }
+    
+    bool test2_pass = (r_6_14.subranges.size() == 3 &&
+                       r_6_14.subranges[0] == make_pair<uint16_t,uint16_t>(6, 7) &&
+                       r_6_14.subranges[1] == make_pair<uint16_t,uint16_t>(8, 11) &&
+                       r_6_14.subranges[2] == make_pair<uint16_t,uint16_t>(12, 14));
+    cout << (test2_pass ? "[PASS]" : "[FAIL]") << " Test 2: [6,14]\n\n";
+    
+    // =========================================================================
+    // CRITICAL TEST 3: [1, 13] (最致命)
+    // =========================================================================
+    cout << "*** CRITICAL TEST 3: [1, 13] (最致命) ***\n";
+    cout << "1 = 00|01, 13 = 11|01 (W=2, 4-bit)\n";
+    cout << "Chunk0: 00 vs 11 → 分裂点!\n";
+    cout << "Expected: [1,3], [4,7], [8,11], [12,13]\n\n";
+    
+    DIRPEResult r_1_13 = dirpe_encode_range(1, 13, config);
+    
+    cout << "Actual:\n";
+    for (size_t i = 0; i < r_1_13.encodings.size(); i++) {
+        cout << "  [" << r_1_13.subranges[i].first << ", " 
+             << r_1_13.subranges[i].second << "] -> " 
+             << r_1_13.encodings[i] << endl;
+    }
+    
+    bool test3_pass = (r_1_13.subranges.size() == 4 &&
+                       r_1_13.subranges[0] == make_pair<uint16_t,uint16_t>(1, 3) &&
+                       r_1_13.subranges[1] == make_pair<uint16_t,uint16_t>(4, 7) &&
+                       r_1_13.subranges[2] == make_pair<uint16_t,uint16_t>(8, 11) &&
+                       r_1_13.subranges[3] == make_pair<uint16_t,uint16_t>(12, 13));
+    cout << (test3_pass ? "[PASS]" : "[FAIL]") << " Test 3: [1,13]\n\n";
+    
+    // Summary
+    cout << "========================================\n";
+    cout << "SUMMARY: " << (test1_pass && test2_pass && test3_pass ? "ALL PASS ✓" : "SOME FAILED ✗") << "\n";
+    cout << "========================================\n\n";
+    
+    // =========================================================================
+    // EXTRA TEST: [26, 36] with W=2, total_bits=6
+    // =========================================================================
+    cout << "*** EXTRA TEST: Range [26, 36] (W=2, 6-bit) ***\n";
+    cout << "26 = 011010 (3 chunks: 01|10|10)\n";
+    cout << "36 = 100100 (3 chunks: 10|01|00)\n";
+    cout << "Chunk 0: 01 vs 10 → 分裂点!\n\n";
+    
+    cout << "Step 1: Split at chunk 0\n";
+    cout << "  Left:  [26, 01|11|11] = [26, 31]\n";
+    cout << "    Chunk 0: 01, Chunk 1: [10,11], Chunk 2: [10,11]\n";
+    cout << "    Chunk 1 不完整 [10,11] ≠ [00,11] → 需要递归分裂\n";
+    cout << "  Right: [10|00|00, 36] = [32, 36]\n";
+    cout << "    Chunk 0: 10, Chunk 1: [00,01], Chunk 2: [00,00]\n";
+    cout << "    Chunk 1 不完整 [00,01] ≠ [00,11] → 需要递归分裂\n\n";
+    
+    cout << "Step 2: Recursive decomposition needed\n";
+    cout << "Expected: Multiple subranges due to incomplete middle chunks\n\n";
+    
+    DIRPEConfig config_6bit = {2, 6};  // W=2, total_bits=6
+    DIRPEResult r_26_36 = dirpe_encode_range(26, 36, config_6bit);
+    
+    cout << "Actual decomposition (" << r_26_36.subranges.size() << " subranges):\n";
+    for (size_t i = 0; i < r_26_36.encodings.size(); i++) {
+        cout << "  [" << r_26_36.subranges[i].first << ", " 
+             << r_26_36.subranges[i].second << "] -> " 
+             << r_26_36.encodings[i] << endl;
+    }
+    cout << endl;
+    
+    // Verify key properties: all ranges should be valid and cover [26,36]
+    uint16_t min_val = r_26_36.subranges[0].first;
+    uint16_t max_val = r_26_36.subranges[r_26_36.subranges.size()-1].second;
+    
+    bool test_26_36_valid = (min_val == 26 && max_val == 36 && 
+                             r_26_36.subranges.size() > 0 &&
+                             r_26_36.encodings.size() == r_26_36.subranges.size());
+    
+    cout << (test_26_36_valid ? "[PASS]" : "[FAIL]") 
+         << " [26,36] decomposition valid (covers [26," << max_val << "], "
+         << r_26_36.subranges.size() << " subranges)\n\n";
+    
+    // Continue with other tests
     // Test single value encoding
     cout << "Single value v=6:\n";
     string val_enc = dirpe_encode_value(6, config);

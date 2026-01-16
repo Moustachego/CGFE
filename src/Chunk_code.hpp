@@ -50,13 +50,18 @@ std::string dirpe_value_chunk(int x, int W);
 std::string dirpe_range_chunk(int s, int e, int W);
 
 // ===============================================================================
-// Module 2: Chunk-aligned Range Decomposition
+// Module 2: Chunk-aligned Range Decomposition (High-bit First Strategy)
 // ===============================================================================
 
-// Check if a range needs decomposition (any chunk has s_chunk > e_chunk)
-bool needs_decomposition(uint16_t s, uint16_t e, const DIRPEConfig& config);
+// Find the FIRST (highest) chunk where s_chunk != e_chunk
+// Returns -1 if all chunks equal
+int find_split_chunk_high(uint16_t s, uint16_t e, const DIRPEConfig& config);
 
-// Decompose [s, e] into chunk-aligned subranges
+// Split a range [s, e] at chunk k into left/middle/right subranges
+std::vector<std::pair<uint16_t, uint16_t>> split_range_by_chunk(
+    uint16_t s, uint16_t e, int k, const DIRPEConfig& config);
+
+// Decompose [s, e] into chunk-aligned subranges (recursive)
 // Each subrange satisfies: for all chunks, s_chunk <= e_chunk
 std::vector<std::pair<uint16_t, uint16_t>> chunk_aligned_decomposition(
     uint16_t s, uint16_t e, const DIRPEConfig& config);

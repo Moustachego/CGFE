@@ -18,24 +18,8 @@ using namespace std;
 
 /*
 ================================================================================
-SRGE (Symmetric Range Gray Encoding) - 严格按论文定义实现
+SRGE (Symmetric Range Gray Encoding) 
 
-总体约束 (铁律):
-- SRGE 的递归单元是 Gray tree 上的"连续子树区间"
-- 输入 [sg, eg] 在 Gray 顺序上连续
-- 所有 split 后的子区间仍然是 Gray 连续区间
-- wildcard 只能表示完整 Gray 子树
-
-递归不变式:
-- srge_recursive(sg, eg) 的输入始终是 Gray 顺序连续区间
-- 每一次 split 都沿 Gray tree 的 LCA 层级
-- wildcard 仅来自完整子树的对称合并
-- 不存在"覆盖但非子树"的 pattern
-
-关键洞察:
-- Gray code 本身不保前缀单调性
-- 但 Gray tree 的结构是由 binary 前缀决定的
-- 所以 LCA 必须在 binary 域计算
 ================================================================================
 */
 
@@ -571,70 +555,7 @@ vector<GrayCodedPort> SRGE(const vector<PortRule> &port_table) {
     return results;
 }
 
-// ============================================================
-// Test Main 
-// ============================================================
 
-#ifdef DEMO_LOADER_MAIN
-int main() {
-    cout << "===== SRGE 论文算法实现测试 =====\n\n";
-    
-    // 测试 Gray 码转换
-    cout << "Gray 码转换测试 (4-bit):\n";
-    cout << "Binary -> Gray -> Binary\n";
-    for (int i = 0; i <= 15; i++) {
-        uint16_t g = binary_to_gray(i);
-        cout << "  " << i << " -> " << bitset<4>(g) << " -> " << gray_to_binary(g) << endl;
-    }
-    cout << endl;
-    
-    // 测试 LCA 计算
-    cout << "LCA 计算测试 (Gray code 公共前缀深度):\n";
-    auto test_lca = [](int b1, int b2, int bits) {
-        uint16_t g1 = binary_to_gray(b1);
-        uint16_t g2 = binary_to_gray(b2);
-        int lca = compute_deepest_gray_lca(g1, g2, bits);
-        cout << "  binary [" << b1 << ", " << b2 << "]"
-             << " gray [" << bitset<4>(g1) << ", " << bitset<4>(g2) << "]"
-             << " -> LCA depth = " << lca << endl;
-    };
-    test_lca(6, 14, 4);   // 0101, 1001 -> 第一位不同，depth=0
-    test_lca(1, 13, 4);   // 0001, 1011 -> 第一位不同，depth=0
-    test_lca(0, 7, 4);    // 0000, 0100 -> 第一位相同，depth>=1
-    test_lca(8, 15, 4);   // 1100, 1000 -> 第一位相同，depth>=1
-    test_lca(0, 15, 4);   // 0000, 1000 -> 第一位不同，depth=0
-    cout << endl;
-    
-    // 测试 SRGE 编码
-    cout << "SRGE 编码测试:\n";
-    
-    auto test_srge = [](int sb, int eb, int bits) {
-        cout << "\n--- Binary range [" << sb << ", " << eb << "] ---\n";
-        SRGEResult result = srge_encode(sb, eb, bits);
-        cout << "Result (" << result.ternary_entries.size() << " entries):\n";
-        for (const auto& e : result.ternary_entries) {
-            cout << "  " << e << endl;
-        }
-    };
-    
-    test_srge(6, 14, 4);
-    cout << "Expected: *10*, 1*1*, 1*01 (3 entries)\n";
-    
-    test_srge(1, 13, 4);
-    cout << "Expected: *1**, *01*, 0001 (3 entries)\n";
-    
-    test_srge(0, 7, 4);
-    cout << "Expected: 0*** (1 entry - complete left subtree)\n";
-    
-    test_srge(0, 15, 4);
-    cout << "Expected: **** (1 entry - complete tree)\n";
-
-    test_srge(1, 6, 4);
-    cout << "Expected: 0*1*, 0*01 (2 entry - complete left subtree)\n";
-    
-    return 0;
-}
-#endif
 
 // ===============================================================================
 // Module 6: TCAM Entry Generation
@@ -751,3 +672,68 @@ void print_tcam_rules(const std::vector<GrayTCAM_Entry>& tcam_entries,
         file_stream.close();
     }
 }
+
+// ============================================================
+// Test Main 
+// ============================================================
+
+#ifdef DEMO_GrayCode_MAIN
+int main() {
+    cout << "===== SRGE  =====\n\n";
+    
+    // 测试 Gray 码转换
+    cout << "Gray 码转换测试 (4-bit):\n";
+    cout << "Binary -> Gray -> Binary\n";
+    for (int i = 0; i <= 15; i++) {
+        uint16_t g = binary_to_gray(i);
+        cout << "  " << i << " -> " << bitset<4>(g) << " -> " << gray_to_binary(g) << endl;
+    }
+    cout << endl;
+    
+    // 测试 LCA 计算
+    cout << "LCA 计算测试 (Gray code 公共前缀深度):\n";
+    auto test_lca = [](int b1, int b2, int bits) {
+        uint16_t g1 = binary_to_gray(b1);
+        uint16_t g2 = binary_to_gray(b2);
+        int lca = compute_deepest_gray_lca(g1, g2, bits);
+        cout << "  binary [" << b1 << ", " << b2 << "]"
+             << " gray [" << bitset<4>(g1) << ", " << bitset<4>(g2) << "]"
+             << " -> LCA depth = " << lca << endl;
+    };
+    test_lca(6, 14, 4);   // 0101, 1001 -> 第一位不同，depth=0
+    test_lca(1, 13, 4);   // 0001, 1011 -> 第一位不同，depth=0
+    test_lca(0, 7, 4);    // 0000, 0100 -> 第一位相同，depth>=1
+    test_lca(8, 15, 4);   // 1100, 1000 -> 第一位相同，depth>=1
+    test_lca(0, 15, 4);   // 0000, 1000 -> 第一位不同，depth=0
+    cout << endl;
+    
+    // 测试 SRGE 编码
+    cout << "SRGE 编码测试:\n";
+    
+    auto test_srge = [](int sb, int eb, int bits) {
+        cout << "\n--- Binary range [" << sb << ", " << eb << "] ---\n";
+        SRGEResult result = srge_encode(sb, eb, bits);
+        cout << "Result (" << result.ternary_entries.size() << " entries):\n";
+        for (const auto& e : result.ternary_entries) {
+            cout << "  " << e << endl;
+        }
+    };
+    
+    test_srge(6, 14, 4);
+    cout << "Expected: *10*, 1*1*, 1*01 (3 entries)\n";
+    
+    test_srge(1, 13, 4);
+    cout << "Expected: *1**, *01*, 0001 (3 entries)\n";
+    
+    test_srge(0, 7, 4);
+    cout << "Expected: 0*** (1 entry - complete left subtree)\n";
+    
+    test_srge(0, 15, 4);
+    cout << "Expected: **** (1 entry - complete tree)\n";
+
+    test_srge(1, 6, 4);
+    cout << "Expected: 0*1*, 0*01 (2 entry - complete left subtree)\n";
+    
+    return 0;
+}
+#endif

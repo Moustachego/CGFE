@@ -1,4 +1,4 @@
-# CGFE-Reproduction
+# CGFE: Efficient range encoding for TCAMs-Reproduction
 
 This repository is a **reproduction and experimental re-implementation** of range encoding and packet classification techniques proposed in prior research on **TCAM-based packet classification**, with a primary focus on **CGFE (Compact Gray-code-based Flow Encoding)**.
 
@@ -57,16 +57,6 @@ This work is based on and inspired by the following publications:
 - Experimental parameters may differ slightly from those reported in the original evaluations
 
 ---
-
-## 📂 Repository Structure (Example)
-
-src/
-├── encoding/ # Range & Gray-code encoding logic
-├── acl_rules/ # Input ACL rule sets
-├── verification/ # Correctness checking & validation
-├── experiments/ # Evaluation scripts
-└── utils/ # Shared helper functions
-
 
 ---
 
