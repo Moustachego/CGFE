@@ -14,8 +14,10 @@
 #include <algorithm>
 #include <iomanip>
 #include <cmath>
+#include <fstream>
 
 #include "CGFE_code.hpp"
+#include "Loader.hpp"
 
 using namespace std;
 
@@ -863,3 +865,113 @@ int main() {
     return 0;
 }
 #endif
+// ===============================================================================
+// Module 8: Port Processing Implementation
+// ===============================================================================
+
+std::vector<CGFEPort> CGFE_encode_ports(const std::vector<PortRule>& port_table, 
+                                        const CGFEConfig& config) {
+    std::vector<CGFEPort> result;
+    
+    for (const auto& port_rule : port_table) {
+        CGFEPort cport;
+        cport.src_port_lo = port_rule.src_port_lo;
+        cport.src_port_hi = port_rule.src_port_hi;
+        cport.dst_port_lo = port_rule.dst_port_lo;
+        cport.dst_port_hi = port_rule.dst_port_hi;
+        cport.priority = port_rule.priority;
+        cport.action = port_rule.action;
+        
+        // Encode source port range
+        cport.src_cgfe = cgfe_encode_range(port_rule.src_port_lo, port_rule.src_port_hi, config);
+        
+        // Encode destination port range
+        cport.dst_cgfe = cgfe_encode_range(port_rule.dst_port_lo, port_rule.dst_port_hi, config);
+        
+        result.push_back(cport);
+    }
+    
+    return result;
+}
+
+std::vector<CGFETCAM_Entry> generate_cgfe_tcam_entries(const std::vector<CGFEPort>& cgfe_ports) {
+    std::vector<CGFETCAM_Entry> tcam_entries;
+    
+    for (const auto& cport : cgfe_ports) {
+        // Get all ternary patterns for source and destination ports
+        auto src_patterns = cgfe_to_ternary(cport.src_cgfe, CGFEConfig{16, 2});
+        auto dst_patterns = cgfe_to_ternary(cport.dst_cgfe, CGFEConfig{16, 2});
+        
+        // Create cartesian product of src/dst patterns
+        for (const auto& src_pat : src_patterns) {
+            for (const auto& dst_pat : dst_patterns) {
+                CGFETCAM_Entry entry;
+                entry.src_pattern = src_pat;
+                entry.dst_pattern = dst_pat;
+                entry.priority = cport.priority;
+                entry.action = cport.action;
+                tcam_entries.push_back(entry);
+            }
+        }
+    }
+    
+    return tcam_entries;
+}
+
+void print_cgfe_tcam_rules(const std::vector<CGFETCAM_Entry>& tcam_entries,
+                           const std::vector<IPRule>& ip_table,
+                           const std::string& output_file) {
+    std::ostream* out = &std::cout;
+    std::ofstream outf;
+    
+    if (!output_file.empty()) {
+        outf.open(output_file);
+        if (!outf.is_open()) {
+            std::cerr << "[ERROR] Cannot open output file: " << output_file << std::endl;
+            return;
+        }
+        out = &outf;
+    }
+    
+    // Header
+    *out << "# CGFE (Chunk-based Gray-code Factored Encoding) TCAM Rules\n";
+    *out << "# Format: SRC_IP DST_IP SRC_PORT DST_PORT PROTOCOL ACTION\n";
+    *out << "#\n";
+    
+    // Generate TCAM entries by combining IP and port dimensions
+    int entry_count = 0;
+    for (const auto& ip_rule : ip_table) {
+        for (const auto& port_entry : tcam_entries) {
+            // Only combine matching priorities
+            if (port_entry.priority != ip_rule.priority) {
+                continue;
+            }
+            
+            // Format IP addresses
+            auto ip_to_string = [](uint32_t ip) -> std::string {
+                return std::to_string((ip >> 24) & 0xFF) + "." +
+                       std::to_string((ip >> 16) & 0xFF) + "." +
+                       std::to_string((ip >> 8) & 0xFF) + "." +
+                       std::to_string(ip & 0xFF);
+            };
+            
+            std::string src_ip = ip_to_string(ip_rule.src_ip_lo);
+            std::string dst_ip = ip_to_string(ip_rule.dst_ip_lo);
+            
+            *out << src_ip << " " 
+                 << dst_ip << " "
+                 << port_entry.src_pattern << " "
+                 << port_entry.dst_pattern << " "
+                 << "0x" << std::hex << std::setfill('0') << std::setw(2) << (int)ip_rule.proto << std::dec << " "
+                 << port_entry.action << "\n";
+            
+            entry_count++;
+        }
+    }
+    
+    *out << "\n# Total TCAM entries: " << entry_count << "\n";
+    
+    if (outf.is_open()) {
+        outf.close();
+    }
+}
