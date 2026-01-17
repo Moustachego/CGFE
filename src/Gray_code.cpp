@@ -1,6 +1,6 @@
 /** *************************************************************/
 // @Name: Gray_code.cpp
-// @Function: SRGE - Symmetric Range Gray Encoding (Paper Implementation)
+// @Function: SRGE - Short Range Gray Encoding (Paper Implementation)
 // @Author: weijzh (weijzh@pcl.ac.cn)
 // @Created: 2026-01-15
 /************************************************************* */
@@ -18,7 +18,7 @@ using namespace std;
 
 /*
 ================================================================================
-SRGE (Symmetric Range Gray Encoding) 
+SRGE (Short Range Gray Encoding) 
 
 ================================================================================
 */

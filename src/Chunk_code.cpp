@@ -1,6 +1,6 @@
 /** *************************************************************/
 // @Name: Chunk_code.cpp
-// @Function: DIRPE (Directed Range Prefix Encoding) - Paper Implementation
+// @Function: DIRPE (Database Independent Range Prefix Encoding) - Paper Implementation
 // @Author: weijzh (weijzh@pcl.ac.cn)
 // @Created: 2026-01-16
 // @Description: Strict paper reproduction for DIRPE chunk-based encoding
