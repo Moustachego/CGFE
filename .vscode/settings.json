@@ -1,0 +1,26 @@
+{
+    // ========== Navigation & Go to Definition ==========
+    // Enable Alt for multi-cursor, keep Ctrl for navigation
+    "editor.multiCursorModifier": "alt",
+    // Disable definition link Peek - open directly in editor
+    "editor.definitionLinkOpensInPeek": false,
+    // Force direct navigation (goto) instead of Peek for multiple results
+    "editor.gotoLocation.multipleDefinitions": "goto",
+    "editor.gotoLocation.multipleDeclarations": "goto",
+    "editor.gotoLocation.multipleImplementations": "goto",
+    "editor.gotoLocation.multipleTypeDefinitions": "goto",
+    "editor.gotoLocation.multipleReferences": "goto",
+    // ========== Local History - Disable unnecessary UI noise ==========
+    // Disable Local History CodeLens to avoid cluttering the editor
+    "local-history.showCodelens": false,
+    // Disable Local History in Peek definitions
+    "local-history.enableInPeek": false,
+    // Disable Local History in Timeline view
+    "local-history.showInTimeline": false,
+    // ========== C++ Specific ==========
+    "files.associations": {
+        "*.hpp": "cpp",
+        "*.cpp": "cpp"
+    },
+    "editor.formatOnSave": true
+}

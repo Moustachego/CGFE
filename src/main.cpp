@@ -1,5 +1,4 @@
 /** *************************************************************/
-// @Name: CGFE.cpp
 // @Function: Main entry point for SRGE, DIRPE and CGFE coding algorithm
 // @Author: weijzh (weijzh@pcl.ac.cn)
 // @Created: 2026-01-14
