@@ -124,25 +124,24 @@ void print_cgfe_result(const CGFEResult& result, const std::string& label = "");
 
 // Convert CGFE entries to full ternary strings
 std::vector<std::string> cgfe_to_ternary(const CGFEResult& result, const CGFEConfig& config);
+
 // ===============================================================================
-// Module 8: Port Processing (similar to SRGE/DIRPE interface)
+// Port Processing Structures
 // ===============================================================================
 
-// Structure for CGFE-encoded port
+// Forward declaration
+struct PortRule;
+struct IPRule;
+
 struct CGFEPort {
-    uint16_t src_port_lo;
-    uint16_t src_port_hi;
-    uint16_t dst_port_lo;
-    uint16_t dst_port_hi;
+    uint16_t src_port_lo, src_port_hi;
+    uint16_t dst_port_lo, dst_port_hi;
     uint32_t priority;
     std::string action;
-    
-    // CGFE results for source and destination port ranges
     CGFEResult src_cgfe;
     CGFEResult dst_cgfe;
 };
 
-// Structure for CGFE TCAM entry (port dimension only)
 struct CGFETCAM_Entry {
     std::string src_pattern;
     std::string dst_pattern;
@@ -150,15 +149,14 @@ struct CGFETCAM_Entry {
     std::string action;
 };
 
-// Encode port table using CGFE
-// Uses standard configuration: W=16 (port range is 16-bit), c=2 (chunk parameter)
+// Encode all port rules using CGFE
 std::vector<CGFEPort> CGFE_encode_ports(const std::vector<PortRule>& port_table, 
                                         const CGFEConfig& config);
 
-// Generate TCAM entries from CGFE-encoded ports
+// Generate TCAM entries from CGFE encoded ports
 std::vector<CGFETCAM_Entry> generate_cgfe_tcam_entries(const std::vector<CGFEPort>& cgfe_ports);
 
-// Print CGFE TCAM rules to file or stdout
+// Print TCAM rules
 void print_cgfe_tcam_rules(const std::vector<CGFETCAM_Entry>& tcam_entries,
                            const std::vector<IPRule>& ip_table,
                            const std::string& output_file = "");

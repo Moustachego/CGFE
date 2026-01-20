@@ -16,7 +16,7 @@ using namespace std;
 int main(int argc, char **argv)
 {
     // Parse command-line arguments
-    string rules_path = "src/ACL_rules/graycode.rules";
+    string rules_path = "src/ACL_rules/example.rules";
     if (argc >= 2) {
         rules_path = string(argv[1]);
     }
@@ -106,14 +106,11 @@ int main(int argc, char **argv)
     cout << "\n===============================================================================\n";
     cout << "----------------------------------- CGFE ---------------------------------------\n";
     cout << "===============================================================================\n\n";
-    cout << "[STEP 5] Applying CGFE Chunk-based Gray-code Factored Encoding to Port ranges...\n\n";
+    cout << "[STEP 5] Applying CGFE (Chunked Gray Fence Encoding) to Port ranges...\n\n";
+
+    // Configuration: W=16 (port bits), c=2 (chunk parameter)
+    CGFEConfig cgfe_config = {16, 2};
     
-    // Configure CGFE: W=16 (port range is 16-bit), c=2 (chunk parameter, same as DIRPE)
-    CGFEConfig cgfe_config;
-    cgfe_config.W = 16;
-    cgfe_config.c = 2;
-    
-    // Encode ports using CGFE
     auto cgfe_ports = CGFE_encode_ports(port_table, cgfe_config);
     auto cgfe_tcam = generate_cgfe_tcam_entries(cgfe_ports);
     
@@ -121,11 +118,9 @@ int main(int argc, char **argv)
     cout << "[SUCCESS] CGFE encoding complete:\n";
     cout << "  - Original port rules: " << port_table.size() << "\n";
     cout << "  - Generated TCAM entries: " << cgfe_tcam.size() << "\n";
-    cout << "  - Bit width (W): " << cgfe_config.W << " bits\n";
-    cout << "  - Chunk parameter (c): " << cgfe_config.c << " bits\n";
-    cout << "  - Block size: 2^(" << cgfe_config.W << "-" << cgfe_config.c << ") = " << cgfe_config.block_size() << "\n";
+    cout << "  - Config: W=" << cgfe_config.W << ", c=" << cgfe_config.c << "\n";
     cout << "  - Average expansion factor: " 
-         << fixed << setprecision(2) 
+         << fixed << setprecision(0) 
          << (double)cgfe_tcam.size() / port_table.size() << "x\n\n";
     
     // Save CGFE TCAM rules to file
