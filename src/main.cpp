@@ -10,13 +10,14 @@
 #include "Loader.hpp"
 #include "Gray_code.hpp"
 #include "Chunk_code.hpp"
+#include "CGFE_code.hpp"
 
 using namespace std;
 
 int main(int argc, char **argv)
 {
     // Parse command-line arguments
-    string rules_path = "src/ACL_rules/graycode.rules";
+    string rules_path = "src/ACL_rules/example.rules";
     if (argc >= 2) {
         rules_path = string(argv[1]);
     }
@@ -106,8 +107,29 @@ int main(int argc, char **argv)
     cout << "\n===============================================================================\n";
     cout << "----------------------------------- CGFE ---------------------------------------\n";
     cout << "===============================================================================\n\n";
+    cout << "[STEP 5] Applying CGFE (Chunked Gray Fence Encoding) to Port ranges...\n\n";
 
+    // Configuration: W=16 (port bits), c=2 (chunk parameter)
+    CGFEConfig cgfe_config = {16, 2};
     
+    auto cgfe_ports = CGFE_encode_ports(port_table, cgfe_config);
+    auto cgfe_tcam = generate_cgfe_tcam_entries(cgfe_ports);
+    
+    cout << "[CGFE Results]:\n\n";
+    cout << "[SUCCESS] CGFE encoding complete:\n";
+    cout << "  - Original port rules: " << port_table.size() << "\n";
+    cout << "  - Generated TCAM entries: " << cgfe_tcam.size() << "\n";
+    cout << "  - Config: W=" << cgfe_config.W << ", c=" << cgfe_config.c << "\n";
+    cout << "  - Average expansion factor: " 
+         << fixed << setprecision(0) 
+         << (double)cgfe_tcam.size() / port_table.size() << "x\n\n";
+    
+    // Save CGFE TCAM rules to file
+    string cgfe_output_file = "src/output/" + base_name + "_CGFE.txt";
+    print_cgfe_tcam_rules(cgfe_tcam, ip_table, cgfe_output_file);
+    cout << "[OUTPUT] CGFE TCAM rules saved to: " << cgfe_output_file << "\n";
+    
+    cout << "\nend\n";
 
     return 0;
 }

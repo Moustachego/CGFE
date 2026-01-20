@@ -35,7 +35,7 @@ echo ""
 echo "[2/5] 编译 ($CXX_BIN -std=c++17)..."
 "$CXX_BIN" -std=c++17 -fdiagnostics-color=always -g \
     src/main.cpp \
-    src/CGFE.cpp \
+    src/CGFE_code.cpp \
     src/Gray_code.cpp \
     src/Chunk_code.cpp \
     src/Loader.cpp \

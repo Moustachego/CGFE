@@ -123,3 +123,39 @@ void print_cgfe_result(const CGFEResult& result, const std::string& label = "");
 
 // Convert CGFE entries to full ternary strings
 std::vector<std::string> cgfe_to_ternary(const CGFEResult& result, const CGFEConfig& config);
+
+// ===============================================================================
+// Port Processing Structures
+// ===============================================================================
+
+// Forward declaration
+struct PortRule;
+struct IPRule;
+
+struct CGFEPort {
+    uint16_t src_port_lo, src_port_hi;
+    uint16_t dst_port_lo, dst_port_hi;
+    uint32_t priority;
+    std::string action;
+    CGFEResult src_cgfe;
+    CGFEResult dst_cgfe;
+};
+
+struct CGFETCAM_Entry {
+    std::string src_pattern;
+    std::string dst_pattern;
+    uint32_t priority;
+    std::string action;
+};
+
+// Encode all port rules using CGFE
+std::vector<CGFEPort> CGFE_encode_ports(const std::vector<PortRule>& port_table, 
+                                        const CGFEConfig& config);
+
+// Generate TCAM entries from CGFE encoded ports
+std::vector<CGFETCAM_Entry> generate_cgfe_tcam_entries(const std::vector<CGFEPort>& cgfe_ports);
+
+// Print TCAM rules
+void print_cgfe_tcam_rules(const std::vector<CGFETCAM_Entry>& tcam_entries,
+                           const std::vector<IPRule>& ip_table,
+                           const std::string& output_file = "");
