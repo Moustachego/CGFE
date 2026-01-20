@@ -727,13 +727,23 @@ void print_tcam_rules(const std::vector<GrayTCAM_Entry> &tcam_entries,
 
         *out_stream << "         ";
 
-        // Source port pattern (only last 4 bits for readability if 16-bit)
-        std::string src_short = entry.src_pattern.substr(entry.src_pattern.length() - 4);
-        *out_stream << src_short << "  ";
+        // Source port pattern (full 16-bit with leading zeros)
+        std::string src_full = entry.src_pattern;
+        // Pad to 16 bits if shorter
+        while (src_full.length() < 16)
+        {
+            src_full = "0" + src_full;
+        }
+        *out_stream << src_full << " ";
 
-        // Destination port pattern
-        std::string dst_short = entry.dst_pattern.substr(entry.dst_pattern.length() - 4);
-        *out_stream << dst_short << "   ";
+        // Destination port pattern (full 16-bit with leading zeros)
+        std::string dst_full = entry.dst_pattern;
+        // Pad to 16 bits if shorter
+        while (dst_full.length() < 16)
+        {
+            dst_full = "0" + dst_full;
+        }
+        *out_stream << dst_full << " ";
 
         // Protocol
         *out_stream << "0x" << std::hex << std::setw(2) << std::setfill('0')

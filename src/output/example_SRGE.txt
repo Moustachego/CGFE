@@ -1,0 +1,5 @@
+=== TCAM Rules (Gray Code Ternary Format) ===
+
+@0.0.0.0/0     0.0.0.0/0         000000000000*10* 0000000000000001 0x06/0xFF   0x0001/0xFFFF
+
+=== Total TCAM Entries: 1 ===
