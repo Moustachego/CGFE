@@ -10,6 +10,7 @@
 #include "Gray_code.hpp"
 #include "Chunk_code.hpp"
 #include "CGFE_code.hpp"
+#include "Prefix_code.hpp"
 
 using namespace std;
 
@@ -136,6 +137,32 @@ int main(int argc, char **argv)
     string cgfe_output_file = "src/output/" + base_name + "_CGFE.txt";
     print_cgfe_tcam_rules(cgfe_tcam, ip_table, cgfe_output_file);
     cout << "[OUTPUT] CGFE TCAM rules saved to: " << cgfe_output_file << "\n";
+
+    cout << "\nend\n";
+
+    // ==============================================================================
+    // Prefix coding algorithm (Binary port expansion)
+    // ==============================================================================
+    cout << "\n===============================================================================\n";
+    cout << "------------------------------ Prefix Coding -------------------------------\n";
+    cout << "===============================================================================\n\n";
+    cout << "[STEP 6] Applying Prefix Coding (Binary Port Expansion) to rules...\n\n";
+
+    std::vector<TCAM_Entry> prefix_tcam;
+    TCAM_Port_Expansion(rules, prefix_tcam);
+
+    cout << "[Prefix Coding Results]:\n\n";
+    cout << "[SUCCESS] Prefix expansion complete:\n";
+    cout << "  - Original rules: " << rules.size() << "\n";
+    cout << "  - Generated TCAM entries: " << prefix_tcam.size() << "\n";
+    cout << "  - Average expansion factor: "
+         << fixed << setprecision(2)
+         << (rules.empty() ? 0.0 : (double)prefix_tcam.size() / rules.size()) << "x\n\n";
+
+    // Save Prefix Coding TCAM rules to file
+    string prefix_output_file = "src/output/" + base_name + "_PREFIX.txt";
+    print_prefix_tcam_rules(prefix_tcam, rules, prefix_output_file);
+    cout << "[OUTPUT] Prefix Coding TCAM rules saved to: " << prefix_output_file << "\n";
 
     cout << "\nend\n";
 
